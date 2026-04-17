@@ -1,0 +1,265 @@
+{
+  "generated_at": "2026-04-17T11:44:26Z",
+  "data_as_of": "2026-04-16",
+  "digest": {
+    "market_wrap": {
+      "title": "Markets Wrap \u2013 Geopolitical Optimism Lifts Equities; Oil Slides on Iran Truce Hopes",
+      "paragraphs": [
+        "U.S. equities ground higher Wednesday, with the S&P 500 adding +0.26% to 7,041.28 and the Nasdaq Composite up +0.36% to 24,102.7 \u2014 the latter extending its one-week gain to +5.61% amid ongoing AI-driven momentum. Energy led all sectors (+1.47%), pulling majors ExxonMobil (+1.99%), Shell (+1.85%), and Chevron (+1.75%) higher even as crude prices sold off \u2014 investors read the sector move as a residual repricing from the week's earlier oil spike rather than a fresh directional bet. Technology (+1.14%) advanced on the back of TSMC's blowout Q1 results \u2014 profit rising 58% y/y \u2014 which buoyed the AI supply-chain narrative; Microsoft gained +2.20% and Salesforce +2.04% within the complex. On the laggard side, Healthcare fell -0.79% and Industrials slipped -0.50%. General Electric was the session's most notable single-stock casualty, dropping -4.98%, while Charles Schwab cratered -7.63% \u2014 the latter dragging Financials (-0.27%) alongside declines in BlackRock (-2.26%), Morgan Stanley (-2.24%), KKR (-1.76%), and Blackstone (-1.58%). Boeing shed -2.26%. European indices were broadly flat to marginally positive \u2014 DAX +0.46%, CAC +0.32% \u2014 while the Nikkei 225 fell -1.75% and the Hang Seng declined -0.89%.",
+        "Treasury yields drifted higher across the curve, with the 10Y adding ~2.8bps to 4.31% and the 30Y rising ~3.9bps to 4.93%, while the 2Y was nearly unchanged at 3.81% \u2014 a modest bear steepening. The move came against a backdrop of renewed concern over long-end demand after former Treasury Secretary Henry Paulson publicly called on policymakers to prepare an emergency contingency plan in the event of a breakdown in Treasury market demand, warning the consequences could be severe. New York Fed President Williams added to the cautious tone, flagging that the ongoing conflict in the region has intensified uncertainty around the growth and inflation outlook. Credit spreads offered little signal \u2014 ICE BofA HY OAS widened just 1bp to 2.85 while IG OAS tightened 1bp to 0.80, leaving both near recent tights and suggesting credit markets remain sanguine despite the rates drift. The Fed funds rate remains at 3.64% as of the latest FRED read, with no incremental policy signal from the session.",
+        "Brent crude fell -3.21% to $96.20/bbl and WTI plunged -7.20% to $87.87/bbl \u2014 the dominant driver being President Trump's comments that the Iran war should end 'pretty soon,' coupled with reports of a 10-day Israel-Lebanon ceasefire agreed following Washington talks. Investors read Trump's remarks as raising the probability of an oil-supply restoration scenario, unwinding a portion of the geopolitical risk premium embedded in prices. Despite the crude selloff, the energy equity complex rallied \u2014 analysts flagged the divergence as sector rotation and income positioning rather than a macro contradiction. Gold added +0.59% to $4,813.7/oz and silver rose +1.07% to $79.45, with both metals sustaining their upward trajectory; copper slipped -0.44% to $6.04/lb. On FX, the DXY eased -0.12% to 98.10, with EUR/USD marginally softer at 1.1800 (-0.08%) and GBP/USD down -0.54% to 1.3500. USD/JPY was essentially flat at 158.81 while USD/CHF declined -0.17% to 0.78, the franc maintaining its recent safe-haven bid. USD/ZAR edged up +0.24% to 16.39.",
+        "The macro backdrop remains one of modest tension between a still-resilient labor market \u2014 March nonfarm payrolls came in at +178K with unemployment ticking down to 4.3% \u2014 and an inflation pulse that has not fully cooled, with the March CPI index at 330.293 implying continued above-target pressure. The Fed funds rate is holding at 3.64%, and markets are not pricing any imminent policy shift given the persistence of both inflation and geopolitical supply-side uncertainty. Trump's public commentary downplaying elevated gas prices as a voter concern, juxtaposed with the S&P 500 registering what context identifies as an all-time high, reflects a market willing to look past the Iran war overhang \u2014 at least provisionally. Kevin Warsh's Fed chair nomination is attracting political scrutiny over financial disclosures, adding a layer of Fed governance uncertainty. On today's calendar, participants will monitor any further diplomatic developments on the Iran/Lebanon front given their demonstrated capacity to move crude 3\u20137% intraday, as well as any Fed speaker commentary that may refine the rate path narrative in light of Williams' growth-inflation concerns flagged Wednesday."
+      ]
+    },
+    "company_sections": [
+      {
+        "company_name": "ExxonMobil",
+        "ticker": "XOM",
+        "event_type": "other",
+        "headline": "Oil Prices Drop on Iran Peace Hopes",
+        "paragraphs": [
+          "WTI and Brent crude both declined after U.S. President Donald Trump stated a truce with Iran should materialize 'pretty soon,' characterizing the situation as looking 'very good.' The move lower in crude was compounded by confirmation of a 10-day Israel-Lebanon ceasefire following talks in Washington, collectively reducing geopolitical risk premium embedded in oil prices.",
+          "The dual de-escalation signals \u2014 potential U.S.-Iran diplomatic progress and the Israel-Lebanon ceasefire \u2014 raised market expectations of reduced Middle East supply disruption risk. Investors will watch for follow-through on any formal Iran nuclear or ceasefire framework, as well as OPEC+ production posture in response to a softening price environment. Sustained crude weakness would pressure XOM's upstream realization prices and, by extension, earnings leverage in coming quarters.",
+          "XOM shares tracked crude lower in sympathy with the broader energy sector selloff. As a heavily upstream-weighted major, ExxonMobil carries direct exposure to realized oil prices; a sustained $5-$10/bbl decline in WTI would represent a meaningful headwind to consensus earnings estimates. The investable takeaway is that geopolitical de-escalation removes a key near-term crude support, shifting focus back to demand fundamentals and OPEC+ discipline as the primary price drivers for XOM's upstream margin outlook."
+        ]
+      },
+      {
+        "company_name": "Chevron",
+        "ticker": "CVX",
+        "event_type": "other",
+        "headline": "Oil Prices Drop on Iran Peace Hopes",
+        "paragraphs": [
+          "Crude oil prices fell sharply after U.S. President Donald Trump stated that the Israel-Iran war should end 'pretty soon,' characterizing the situation as looking 'very good' for a near-term truce. WTI and Brent both declined on the commentary, with additional downward pressure following confirmation that Israel and Lebanon had agreed to a 10-day ceasefire following Washington talks. The dual geopolitical developments reduced risk premiums embedded in crude pricing that had been sustained by Middle East conflict escalation fears.",
+          "The prospective de-escalation carries material implications for global oil supply expectations, as a formalized Iran agreement could pave the way for eased sanctions and incremental Iranian barrel flows re-entering the market. Investors will watch whether diplomatic progress solidifies into a durable framework or stalls, as well as any OPEC+ response to shifting supply-demand dynamics. For CVX specifically, the trajectory of crude realizations remains the dominant near-term earnings driver, making headline geopolitical developments a direct read-through to forward cash flow assumptions.",
+          "CVX shares came under pressure in line with the broader energy sector selloff, consistent with the inverse relationship between crude price moves and integrated oil equity valuations. The development is bearish for near-term CVX price action in the absence of offsetting catalysts; analysts covering the name will likely revisit their oil price deck assumptions if ceasefire momentum accelerates. The investable takeaway: sustained geopolitical de-escalation represents a headwind to CVX's realized pricing and free cash flow generation, keeping the stock range-bound until crude finds a new equilibrium."
+        ]
+      },
+      {
+        "company_name": "Shell",
+        "ticker": "SHEL",
+        "event_type": "other",
+        "headline": "Oil Prices Drop on Iran Peace Hopes",
+        "paragraphs": [
+          "Crude oil prices fell sharply after U.S. President Donald Trump stated that the Iran conflict should end 'pretty soon,' describing prospects for a truce as looking 'very good.' Both WTI and Brent crude declined on the headlines. A separate catalyst compounded the move: Trump confirmed Israel and Lebanon had agreed to a 10-day ceasefire following Washington talks, further reducing geopolitical risk premium embedded in oil prices.",
+          "The dual de-escalation signals \u2014 potential Iran deal progress and the Israel-Lebanon ceasefire \u2014 suggest a near-term reduction in Middle East supply disruption risk, a key driver of elevated crude prices in recent months. Investors will watch whether Iran nuclear/sanctions negotiations advance materially, as any formal agreement restoring Iranian crude exports to global markets would represent a structural bearish shift in supply-demand balance. Shell, as a major integrated oil company with earnings directly leveraged to Brent realizations, faces near-term headwinds to upstream revenue and cash generation if crude weakness persists.",
+          "SHEL shares came under pressure in line with the broader energy sector selloff driven by the crude decline. The read-through is straightforwardly bearish for near-term upstream earnings and free cash flow assumptions; analysts covering integrated majors will likely trim Brent price deck assumptions if geopolitical risk premium continues to unwind. The investable takeaway: Shell carries direct commodity price exposure, and sustained crude softness tied to Middle East de-escalation represents a headwind to consensus earnings estimates and dividend/buyback capacity projections in the near term."
+        ]
+      }
+    ],
+    "market_snapshot": {
+      "indices": [
+        {
+          "name": "S&P 500",
+          "ticker": "^GSPC",
+          "last": 7041.28,
+          "change_1d_pct": 0.26,
+          "change_1w_pct": 3.17,
+          "change_ytd_pct": 2.67
+        },
+        {
+          "name": "Nasdaq Composite",
+          "ticker": "^IXIC",
+          "last": 24102.7,
+          "change_1d_pct": 0.36,
+          "change_1w_pct": 5.61,
+          "change_ytd_pct": 3.73
+        },
+        {
+          "name": "Dow Jones Industrial Average",
+          "ticker": "^DJI",
+          "last": 48578.72,
+          "change_1d_pct": 0.24,
+          "change_1w_pct": 0.82,
+          "change_ytd_pct": 0.41
+        },
+        {
+          "name": "Russell 2000",
+          "ticker": "^RUT",
+          "last": 2719.6,
+          "change_1d_pct": 0.22,
+          "change_1w_pct": 3.16,
+          "change_ytd_pct": 8.43
+        },
+        {
+          "name": "STOXX Europe 600",
+          "ticker": "^STOXX",
+          "last": 616.92,
+          "change_1d_pct": -0.0,
+          "change_1w_pct": 0.34,
+          "change_ytd_pct": 2.52
+        },
+        {
+          "name": "FTSE 100",
+          "ticker": "^FTSE",
+          "last": 10554.79,
+          "change_1d_pct": -0.33,
+          "change_1w_pct": -0.43,
+          "change_ytd_pct": 6.07
+        },
+        {
+          "name": "DAX",
+          "ticker": "^GDAXI",
+          "last": 24265.13,
+          "change_1d_pct": 0.46,
+          "change_1w_pct": 1.94,
+          "change_ytd_pct": -1.12
+        },
+        {
+          "name": "CAC 40",
+          "ticker": "^FCHI",
+          "last": 8288.8,
+          "change_1d_pct": 0.32,
+          "change_1w_pct": 0.35,
+          "change_ytd_pct": 1.14
+        },
+        {
+          "name": "Nikkei 225",
+          "ticker": "^N225",
+          "last": 58475.9,
+          "change_1d_pct": -1.75,
+          "change_1w_pct": 2.73,
+          "change_ytd_pct": 12.82
+        },
+        {
+          "name": "Hang Seng",
+          "ticker": "^HSI",
+          "last": 26160.33,
+          "change_1d_pct": -0.89,
+          "change_1w_pct": 1.03,
+          "change_ytd_pct": -0.68
+        },
+        {
+          "name": "Shanghai Composite",
+          "ticker": "000001.SS",
+          "last": 4051.43,
+          "change_1d_pct": -0.1,
+          "change_1w_pct": 1.64,
+          "change_ytd_pct": 0.7
+        }
+      ],
+      "fixed_income": [
+        {
+          "name": "US 2Y Treasury",
+          "ticker": "2YY=F",
+          "last_yield_pct": 3.81,
+          "change_1d_bps": 0.4,
+          "change_1w_bps": 0.4
+        },
+        {
+          "name": "US 10Y Treasury",
+          "ticker": "^TNX",
+          "last_yield_pct": 4.31,
+          "change_1d_bps": 2.8,
+          "change_1w_bps": 1.7
+        },
+        {
+          "name": "US 30Y Treasury",
+          "ticker": "^TYX",
+          "last_yield_pct": 4.93,
+          "change_1d_bps": 3.9,
+          "change_1w_bps": 3.3
+        }
+      ],
+      "commodities": [
+        {
+          "name": "Brent Crude",
+          "ticker": "BZ=F",
+          "last": 96.2,
+          "change_1d_pct": -3.21,
+          "change_1w_pct": 1.05,
+          "change_ytd_pct": 58.35
+        },
+        {
+          "name": "WTI Crude",
+          "ticker": "CL=F",
+          "last": 87.87,
+          "change_1d_pct": -7.2,
+          "change_1w_pct": -9.01,
+          "change_ytd_pct": 53.3
+        },
+        {
+          "name": "Gold",
+          "ticker": "GC=F",
+          "last": 4813.7,
+          "change_1d_pct": 0.59,
+          "change_1w_pct": 1.09,
+          "change_ytd_pct": 11.57
+        },
+        {
+          "name": "Silver",
+          "ticker": "SI=F",
+          "last": 79.45,
+          "change_1d_pct": 1.07,
+          "change_1w_pct": 4.1,
+          "change_ytd_pct": 12.61
+        },
+        {
+          "name": "Copper",
+          "ticker": "HG=F",
+          "last": 6.04,
+          "change_1d_pct": -0.44,
+          "change_1w_pct": 2.89,
+          "change_ytd_pct": 7.09
+        },
+        {
+          "name": "Natural Gas",
+          "ticker": "NG=F",
+          "last": 2.68,
+          "change_1d_pct": 1.25,
+          "change_1w_pct": 1.21,
+          "change_ytd_pct": -25.93
+        }
+      ],
+      "fx": [
+        {
+          "name": "Dollar Index",
+          "ticker": "DX-Y.NYB",
+          "last": 98.1,
+          "change_1d_pct": -0.12,
+          "change_1w_pct": -0.56
+        },
+        {
+          "name": "EUR/USD",
+          "ticker": "EURUSD=X",
+          "last": 1.18,
+          "change_1d_pct": -0.08,
+          "change_1w_pct": 0.93
+        },
+        {
+          "name": "GBP/USD",
+          "ticker": "GBPUSD=X",
+          "last": 1.35,
+          "change_1d_pct": -0.54,
+          "change_1w_pct": 0.52
+        },
+        {
+          "name": "USD/JPY",
+          "ticker": "JPY=X",
+          "last": 158.81,
+          "change_1d_pct": 0.01,
+          "change_1w_pct": 0.11
+        },
+        {
+          "name": "USD/CHF",
+          "ticker": "CHF=X",
+          "last": 0.78,
+          "change_1d_pct": -0.17,
+          "change_1w_pct": -1.37
+        },
+        {
+          "name": "USD/ZAR",
+          "ticker": "ZAR=X",
+          "last": 16.39,
+          "change_1d_pct": 0.24,
+          "change_1w_pct": 0.07
+        }
+      ]
+    },
+    "earnings_this_week": []
+  },
+  "meta": {
+    "api_calls": 5,
+    "estimated_cost_usd": 0.054385,
+    "warnings": []
+  }
+}
