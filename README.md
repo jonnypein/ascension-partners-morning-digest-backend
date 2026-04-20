@@ -131,6 +131,56 @@ python digest_backend.py > output.json
 
 Tags: `equities`, `fixed_income`, `commodities`, `fx`, `macro`
 
+## Earnings cards (separate per-company cards)
+
+In parallel with the Market Wrap and company sections, each daily run also
+produces structured earnings cards for any watchlist company that filed an
+SEC 8-K with Item 2.02 ("Results of Operations") in the last 36 hours.
+
+Pipeline:
+
+1. **[earnings_backend.py](earnings_backend.py)** — walks `WATCHLIST`, finds
+   CIKs via the public SEC ticker map, pulls recent 8-Ks from EDGAR, fetches
+   each filing's EX-99.1 earnings release, adds consensus (rev + EPS via
+   yfinance), next-session price reaction, and prior-quarter guidance from
+   our own `company_guidance` table. Emits one bundle per company that reported.
+2. **[earnings_writer.py](earnings_writer.py)** — sends each bundle to Sonnet
+   using the Ascension Partners earnings card prompt. Returns a validated card
+   per the schema (headline, tag, results, guidance, price_reaction,
+   digest_paragraph, flags).
+3. **[run_daily.py](run_daily.py)** upserts each card into the dedicated
+   `earnings_cards` Supabase table (keyed on `(ticker, fiscal_period)` with
+   a top-level `filed_at` for date-window queries), upserts each card's
+   guidance into `company_guidance` for next quarter's `prior_guidance`
+   lookup, and publishes the daily digest (Markets Wrap etc.) to `digests`
+   as before.
+
+Cards live in their own table — not inside the daily `digests` row — so they
+surface on their actual filing date in Lovable rather than being pinned to
+whichever pipeline run produced them. The frontend queries with a date
+window (`filed_at >= now() - interval '24h'` for the "Earnings Today"
+section).
+
+Non-US filers (e.g. Shell files 6-K) produce zero hits and are skipped silently.
+
+### One-time setup
+
+Run [schema.sql](schema.sql) in the Supabase SQL editor to create the
+`company_guidance` and `earnings_cards` tables.
+
+### Manual usage
+
+```bash
+# Find any 8-Ks in last 36h for all watchlist companies
+python earnings_backend.py
+
+# Debug one ticker with a wider window
+python earnings_backend.py --ticker JPM --lookback-hours 240
+
+# Full pipeline (bundles -> cards)
+python earnings_backend.py --lookback-hours 240 | python earnings_writer.py
+```
+
 ## Writer output shape
 
 The writer emits a single JSON object for downstream renderers (Lovable, email, PDF):

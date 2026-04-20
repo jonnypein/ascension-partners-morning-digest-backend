@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 import schedule
 
-from publish import publish_digest
+from publish import publish_digest, publish_earnings_card, publish_guidance
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "output"
@@ -99,18 +99,104 @@ def run_pipeline() -> bool:
     if writer.stderr.strip():
         log.info("Writer stderr: %s", writer.stderr.strip())
 
+    digest = json.loads(writer.stdout)
+
     out_path.write_text(writer.stdout)
     shutil.copyfile(out_path, latest_path)
     log.info("Digest saved to %s (%d bytes)", out_path, len(writer.stdout))
 
+    # Earnings pipeline runs independently of the daily digest row. Each card
+    # is upserted into its own `earnings_cards` table keyed by (ticker,
+    # fiscal_period), so cards surface on their actual filing date in Lovable
+    # rather than being pinned to whichever daily run generated them.
     try:
-        digest = json.loads(writer.stdout)
+        earnings_cards = run_earnings_pipeline()
+        if earnings_cards:
+            log.info("Earnings pipeline produced %d card(s)", len(earnings_cards))
+            earnings_path = OUTPUT_DIR / f"earnings_cards_{today.isoformat()}.json"
+            earnings_path.write_text(json.dumps({"cards": earnings_cards}))
+            for card in earnings_cards:
+                _publish_card(card)
+                _persist_card_guidance(card)
+    except Exception as exc:
+        log.exception("Earnings pipeline failed (digest still saved): %s", exc)
+
+    try:
         publish_digest(digest)
         log.info("Published to Supabase (date=%s)", digest.get("data_as_of"))
     except Exception as exc:
         log.exception("Supabase publish failed (local file still saved): %s", exc)
 
     return True
+
+
+PERSISTABLE_GUIDANCE = {"raised", "lowered", "maintained", "initiated"}
+
+
+def run_earnings_pipeline() -> list[dict]:
+    """Pipe earnings_backend.py into earnings_writer.py and return the card list."""
+    log.info("Running earnings backend")
+    backend = subprocess.run(
+        [sys.executable, "earnings_backend.py"],
+        capture_output=True,
+        text=True,
+        cwd=SCRIPT_DIR,
+    )
+    if backend.returncode != 0:
+        log.error("Earnings backend failed (rc=%s): %s", backend.returncode, backend.stderr.strip())
+        return []
+    if backend.stderr.strip():
+        log.info("Earnings backend stderr: %s", backend.stderr.strip())
+
+    # Short-circuit if there are no bundles — skip the Claude call entirely.
+    bundles = json.loads(backend.stdout).get("bundles", [])
+    if not bundles:
+        log.info("Earnings backend: no recent 8-Ks in watchlist")
+        return []
+
+    log.info("Running earnings writer (%d bundle(s))", len(bundles))
+    writer = subprocess.run(
+        [sys.executable, "earnings_writer.py"],
+        input=backend.stdout,
+        capture_output=True,
+        text=True,
+        cwd=SCRIPT_DIR,
+    )
+    if writer.returncode != 0:
+        log.error("Earnings writer failed (rc=%s): %s", writer.returncode, writer.stderr.strip())
+        return []
+    if writer.stderr.strip():
+        log.info("Earnings writer stderr: %s", writer.stderr.strip())
+
+    payload = json.loads(writer.stdout)
+    return payload.get("earnings_cards", [])
+
+
+def _publish_card(card: dict) -> None:
+    try:
+        publish_earnings_card(card)
+        log.info("Published earnings card: %s %s", card.get("ticker"), card.get("fiscal_period"))
+    except Exception as exc:
+        log.exception("publish_earnings_card failed for %s: %s", card.get("ticker"), exc)
+
+
+def _persist_card_guidance(card: dict) -> None:
+    guidance = card.get("guidance") or {}
+    direction = guidance.get("direction")
+    if direction not in PERSISTABLE_GUIDANCE:
+        return
+    source = card.get("_source") or {}
+    filed_at = source.get("filed_at")
+    fiscal_period = card.get("fiscal_period")
+    ticker = card.get("ticker")
+    if not (ticker and fiscal_period and filed_at):
+        log.warning("Skipping guidance persist for %s: incomplete card", ticker)
+        return
+    try:
+        publish_guidance(ticker, fiscal_period, guidance, filed_at)
+        log.info("Saved guidance for %s %s (direction=%s)", ticker, fiscal_period, direction)
+    except Exception as exc:
+        log.exception("publish_guidance failed for %s: %s", ticker, exc)
 
 
 def scheduled_job() -> None:
