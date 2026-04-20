@@ -224,6 +224,21 @@ def run_now() -> int:
         return 1
 
 
+def run_scheduled_once() -> int:
+    """One-shot scheduled run for external cron (e.g. GitHub Actions).
+
+    Honours the NYSE holiday/weekend check inside `scheduled_job`, so the
+    cron can fire Mon-Fri without us needing to hard-code a holiday list.
+    """
+    log.info("External cron --scheduled run triggered")
+    try:
+        scheduled_job()
+        return 0
+    except Exception as exc:
+        log.exception("Scheduled run raised: %s", exc)
+        return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Daily Morning Digest scheduler")
     parser.add_argument(
@@ -231,12 +246,19 @@ def main() -> int:
         action="store_true",
         help="Run the pipeline once immediately, bypassing schedule and holiday checks, then exit.",
     )
+    parser.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="One-shot run for external cron (e.g. GitHub Actions). Respects NYSE holiday/weekend skip.",
+    )
     args = parser.parse_args()
 
     setup_logging()
 
     if args.now:
         return run_now()
+    if args.scheduled:
+        return run_scheduled_once()
 
     for day in ("monday", "tuesday", "wednesday", "thursday", "friday"):
         getattr(schedule.every(), day).at(RUN_TIME, LONDON).do(scheduled_job)
