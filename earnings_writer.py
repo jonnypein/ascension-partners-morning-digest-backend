@@ -40,16 +40,16 @@ Produce a single JSON object containing structured facts and a Digest paragraph.
 {
   "ticker": string,
   "company_name": string,
-  "fiscal_period": string,
+  "fiscal_period": string,                // compact form only, e.g. "Q1 2026" or "FY 2025". No parenthetical dates.
   "headline": string,                    // 6-10 words for card title, e.g. "Microsoft beats on Azure, guidance raised"
   "tag": "beat" | "miss" | "in-line" | "mixed",
   "one_line_takeaway": string,           // <=20 words, the single most investable point
   "results": {
-    "revenue_actual": number | null,
-    "revenue_consensus": number | null,
+    "revenue_actual": number | null,     // FULL USD, e.g. $6.48B => 6480000000. Never store as millions or billions.
+    "revenue_consensus": number | null,  // FULL USD. If the provided consensus is in different units than the press release reports, normalize to match revenue_actual.
     "revenue_surprise_pct": number | null,
-    "eps_actual": number | null,
-    "eps_consensus": number | null,
+    "eps_actual": number | null,         // USD per share (unscaled, e.g. 5.94)
+    "eps_consensus": number | null,      // USD per share (unscaled)
     "eps_surprise_pct": number | null,
     "segment_highlights": [
       { "segment": string, "actual": number | null, "vs_consensus_pct": number | null, "note": string }
@@ -115,11 +115,11 @@ The one_line_takeaway field:
 2. Every number in digest_paragraph, headline, and one_line_takeaway must appear in the source material or the provided consensus/price inputs.
 3. If press release contradicts prepared remarks, flag it in low_confidence_fields and prefer the press release.
 4. Guidance direction: compare new guidance to prior_guidance input. If prior_guidance is empty, use "not_provided" rather than guessing.
-5. Tag classification:
-   - "beat" = both revenue and EPS beat by >1%
-   - "miss" = both revenue and EPS missed by >1%
-   - "in-line" = both within +/-1%
-   - "mixed" = split (e.g. beat revenue, missed EPS). Explain in beat_miss_rationale.
+5. Tag classification — strictly mechanical from revenue_surprise_pct and eps_surprise_pct ONLY. Ignore YoY growth, "record" language, or adjusted vs GAAP framing when picking the tag (those belong in the paragraph, not the tag).
+   - "beat" = both revenue_surprise_pct > 1 AND eps_surprise_pct > 1
+   - "miss" = both revenue_surprise_pct < -1 AND eps_surprise_pct < -1
+   - "in-line" = both within +/-1% of consensus
+   - "mixed" = any other combination (e.g. rev beat but EPS miss). Explain in beat_miss_rationale.
 6. If uncertain about any field, add it to flags.low_confidence_fields. Do not paper over uncertainty.
 7. Return only the JSON object. No preamble, no markdown code fences, no commentary.
 </critical_rules>
