@@ -179,6 +179,25 @@ RSS_FEEDS: list[tuple[str, str]] = [
     ("MarketWatch Top Stories",   "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
     ("MarketWatch Real-time",     "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
     ("MarketWatch Market Pulse",  "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"),
+    # Reuters + Bloomberg via Google News site-scoped search — Reuters killed
+    # their native RSS in 2023, and Bloomberg has no public RSS. Google News
+    # surfaces the articles within a 24h window.
+    ("Reuters (via GNews)",       "https://news.google.com/rss/search?q=when:24h+site:reuters.com+business&hl=en-US&gl=US&ceid=US:en"),
+    ("Bloomberg (via GNews)",     "https://news.google.com/rss/search?q=when:24h+site:bloomberg.com&hl=en-US&gl=US&ceid=US:en"),
+    # Seeking Alpha — analyst views, earnings previews, buy-side commentary
+    ("Seeking Alpha Market",      "https://seekingalpha.com/market_currents.xml"),
+    ("Seeking Alpha General",     "https://seekingalpha.com/feed.xml"),
+    ("Seeking Alpha Popular",     "https://seekingalpha.com/listing/most-popular-articles.xml"),
+    # Central banks — direct from the source for monetary policy signals
+    ("Federal Reserve",           "https://www.federalreserve.gov/feeds/press_all.xml"),
+    ("ECB Press",                 "https://www.ecb.europa.eu/rss/press.html"),
+    ("Bank of England",           "https://www.bankofengland.co.uk/rss/news"),
+    ("Bank of Japan",             "https://www.boj.or.jp/en/rss/whatsnew.xml"),
+    # European + Asian institutional coverage
+    ("FT Markets (via GNews)",    "https://news.google.com/rss/search?q=when:24h+site:ft.com+markets&hl=en-US&gl=US&ceid=US:en"),
+    ("Nikkei Asia Business",      "https://asia.nikkei.com/rss/feed/nar"),
+    ("China econ (via GNews)",    "https://news.google.com/rss/search?q=when:24h+%28China+OR+PBoC+OR+Beijing%29+economy&hl=en-US&gl=US&ceid=US:en"),
+    ("Japan econ (via GNews)",    "https://news.google.com/rss/search?q=when:24h+%28Japan+OR+BoJ+OR+Tokyo%29+%28economy+OR+markets%29&hl=en-US&gl=US&ceid=US:en"),
 ]
 
 # Yahoo Finance has a primary + fallback URL. Tried in order; first non-empty wins.
@@ -186,6 +205,11 @@ YAHOO_FINANCE_FEED_URLS: list[str] = [
     "https://finance.yahoo.com/news/rssindex",
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US",
 ]
+
+# Per-ticker Yahoo Finance feeds. Pulling these in addition to the general
+# feeds ensures watchlist-specific coverage (analyst notes, earnings previews,
+# management commentary) isn't crowded out by macro headlines.
+YAHOO_TICKER_FEED_TMPL = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
 
 # ── Classifier settings ────────────────────────────────────────────────────────
 
@@ -509,6 +533,8 @@ def _fetch_feeds(errors: list[str]) -> tuple[list[dict], int, int]:
     feeds_attempted = 0
     feeds_ok = 0
 
+    is_google_news = lambda name: "GNews" in name  # titles have " - Publisher" suffix
+
     def _parse_feed(source_name: str, url: str) -> list[dict]:
         nonlocal feeds_attempted, feeds_ok
         feeds_attempted += 1
@@ -521,10 +547,15 @@ def _fetch_feeds(errors: list[str]) -> tuple[list[dict], int, int]:
             errors.append(f"Feed '{source_name}': returned 0 entries ({url})")
             return []
         feeds_ok += 1
+        strip_suffix = is_google_news(source_name)
         items = []
         for entry in feed.entries:
+            title = getattr(entry, "title", "")
+            # Google News format: "Headline text - Publisher" — strip the publisher suffix.
+            if strip_suffix:
+                title = re.sub(r"\s+-\s+[^-]+$", "", title).strip()
             items.append({
-                "title":           getattr(entry, "title", ""),
+                "title":           title,
                 "description_raw": getattr(entry, "summary", getattr(entry, "description", "")),
                 "url":             getattr(entry, "link", ""),
                 "source":          source_name,
@@ -563,6 +594,19 @@ def _fetch_feeds(errors: list[str]) -> tuple[list[dict], int, int]:
 
     if not yahoo_added:
         errors.append("Yahoo Finance: all feed URLs failed or returned 0 entries — skipped")
+
+    # Per-ticker Yahoo feeds: one per watchlist company. Most ticker feeds
+    # return a handful of items; some fail quietly (empty feed) for less
+    # active names or tickers with dashes. _parse_feed increments the
+    # feeds_attempted/feeds_ok counters internally; we just consume the items.
+    for _, ticker in [(n, t) for group in WATCHLIST.values() for n, t in group]:
+        url = YAHOO_TICKER_FEED_TMPL.format(ticker=ticker)
+        items = _parse_feed(f"Yahoo Finance [{ticker}]", url)
+        # Tag each item with its ticker so downstream can treat per-ticker
+        # items as guaranteed watchlist mentions without re-scanning text.
+        for item in items:
+            item["_watchlist_ticker"] = ticker
+        raw_items.extend(items)
 
     return raw_items, feeds_attempted, feeds_ok
 
@@ -655,6 +699,11 @@ def _select_top_items(classified: list[dict]) -> dict[str, list[dict]]:
     """
     Group items by asset class and select top N by relevance (most recent as tiebreak).
     An item with multiple tags appears in each relevant class's list.
+
+    Watchlist-mention bypass: within the `equities` class, any item that came
+    from a per-ticker Yahoo feed is admitted unconditionally (in addition to
+    the top N). This guarantees coverage of watchlist names on days when
+    macro headlines would otherwise crowd them out of the top-N cut.
     """
     by_class: dict[str, list[dict]] = {cls: [] for cls in ASSET_CLASSES}
     for item in classified:
@@ -669,7 +718,16 @@ def _select_top_items(classified: list[dict]) -> dict[str, list[dict]]:
             key=lambda x: (x["relevance"], x.get("published", "")),
             reverse=True,
         )
-        # Format for output, dropping internal fields
+        selected = list(sorted_items[:TOP_N_PER_CLASS])
+
+        if cls == "equities":
+            seen_urls = {x.get("url") for x in selected}
+            bypass = [
+                x for x in sorted_items
+                if x.get("_watchlist_ticker") and x.get("url") not in seen_urls
+            ]
+            selected.extend(bypass)
+
         result[cls] = [
             {
                 "headline":    x["title"],
@@ -679,8 +737,9 @@ def _select_top_items(classified: list[dict]) -> dict[str, list[dict]]:
                 "tags":        x["tags"],
                 "relevance":   x["relevance"],
                 "published":   x.get("published", ""),
+                "ticker":      x.get("_watchlist_ticker"),
             }
-            for x in sorted_items[:TOP_N_PER_CLASS]
+            for x in selected
         ]
     return result
 

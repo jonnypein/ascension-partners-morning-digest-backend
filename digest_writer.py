@@ -57,7 +57,7 @@ SONNET_OUTPUT_PRICE = 15.00 / 1_000_000
 
 MAX_COMPANY_SECTIONS = 7
 
-EVENT_TYPES = {"earnings", "corporate_action", "guidance", "regulatory", "other"}
+EVENT_TYPES = {"earnings", "corporate_action", "guidance", "analyst", "regulatory", "capital_markets", "other"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -170,21 +170,47 @@ class CostTracker:
 # STEP A — company identification (Haiku)
 # ══════════════════════════════════════════════════════════════════════════════
 
-COMPANY_ID_SYSTEM = """You are a senior editor at an institutional market intelligence desk. Your job: identify which watchlist companies have material news worth a dedicated section in today's digest.
+COMPANY_ID_SYSTEM = """You are a senior editor at an institutional market intelligence desk. Your job: identify which watchlist companies have newsworthy coverage worth a dedicated section in today's digest for a buy-side reader.
 
-MATERIAL news includes: earnings reports, M&A, major guidance changes, significant share-price moves on news (>3%), regulatory events, notable partnerships, strategic pivots.
-NOT MATERIAL: routine operational updates, analyst rating changes alone, minor product announcements.
+INCLUDE any of the following when a watchlist company is the primary subject:
+- earnings reports, pre-announcements, earnings previews ahead of known print dates
+- M&A, spinoffs, stake changes, major capital return decisions
+- company-issued guidance (raise, cut, reaffirmation, withdrawal)
+- sell-side analyst moves: ratings changes, price-target revisions, initiations, category calls — tag these as "analyst"
+- regulatory or legal events (investigations, settlements, approvals, fines)
+- capital markets activity: debt issuance, equity raises, secondary offerings, IPOs, share buybacks announced or executed, tender offers, credit facility arrangements — tag as "capital_markets"
+- private credit and fundraising: fund closes, LP commitments, strategy launches for alt managers (BX, KKR, APO, BLK); private credit deal announcements — tag as "capital_markets"
+- AI and technology developments that meaningfully affect the named company: AI infrastructure deals, chip partnerships, data center expansions, model releases, AI M&A, AI-driven product pivots — tag as "corporate_action" or "other"
+- material partnerships, customer wins, large contracts
+- executive departures or hires at CEO/CFO/key division head level
+- strategic pivots, layoffs, restructurings, cyber incidents, outages
+- index inclusion/removal, credit rating changes
+- significant share-price moves on news (>3%)
+
+EXCLUDE:
+- Pure sector or asset-class commentary that doesn't single out a watchlist name ("tech leads," "banks rally")
+- Routine operational updates with no new information
+- Marketing PR or minor product refreshes without financial implication
+
+event_type values:
+- "earnings"         — results, pre-announcements, previews tied to an upcoming print
+- "corporate_action" — M&A, spinoffs, exec changes, restructurings, layoffs, strategic pivots, partnerships, AI/tech deals
+- "guidance"         — the company itself updating forward-looking expectations
+- "analyst"          — sell-side ratings, price targets, initiations
+- "regulatory"       — lawsuits, regulator actions, compliance events
+- "capital_markets"  — debt/equity issuance, IPOs, secondaries, tender offers, buybacks, credit facilities, private credit deals, fund closes, LP commitments
+- "other"            — any material catalyst that doesn't cleanly fit above
 
 For each qualifying company, return one object:
 {
   "company_name": string,          // must match a watchlist name exactly
   "ticker": string,                // must match the watchlist ticker exactly
-  "event_type": "earnings" | "corporate_action" | "guidance" | "regulatory" | "other",
-  "headline": string,              // short label for the event, e.g. "Q1 2026 Results", "Stock Slides on Guidance Cut"
+  "event_type": "earnings" | "corporate_action" | "guidance" | "analyst" | "regulatory" | "capital_markets" | "other",
+  "headline": string,              // short label for the event, e.g. "Q1 2026 Results", "$15B Credit Fund Close", "Google AI Chip Partnership"
   "relevant_context_indices": [int, ...]   // indices into the provided context_items list
 }
 
-Return a JSON array. Maximum 7 companies — pick the highest-signal ones. Return [] if no material news. Output only the JSON array."""
+Return a JSON array. Maximum 7 companies — pick the highest-signal ones if you have more than 7 candidates. Prioritize earnings/M&A/regulatory over analyst chatter when ranking. Return [] only if no watchlist company has any qualifying coverage in the context. Output only the JSON array."""
 
 
 def step_a_identify_companies(
@@ -303,11 +329,22 @@ def step_b_company_section(
         f"Context snippets:\n\n{snippet_text}"
     )
 
+    sources = [
+        {
+            "url":       s.get("url"),
+            "headline":  s.get("headline"),
+            "publisher": s.get("source"),
+        }
+        for s in snippets
+        if s.get("url")
+    ]
+
     shell = {
         "company_name": company["company_name"],
         "ticker":       company["ticker"],
         "event_type":   company["event_type"],
         "headline":     company["headline"],
+        "sources":      sources,
     }
 
     try:

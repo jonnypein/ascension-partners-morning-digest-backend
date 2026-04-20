@@ -1,0 +1,54 @@
+name: Daily Digest
+
+# 04:30 UTC weekdays — that's 05:30 BST (Mar-Oct) and 04:30 GMT (Oct-Mar).
+# Always before US markets open, which is what matters for a morning digest.
+# The workflow_dispatch trigger lets you run it manually from the Actions tab.
+on:
+  schedule:
+    - cron: "30 4 * * 1-5"
+  workflow_dispatch: {}
+
+# Prevent overlapping runs; if yesterday's is still going somehow, cancel it.
+concurrency:
+  group: daily-digest
+  cancel-in-progress: false
+
+jobs:
+  run-daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python run_daily.py --scheduled
+
+      # Always upload the local output + logs as an artifact, even on failure,
+      # so you can download them from the Actions UI if you need to debug.
+      # The digest itself is already in Supabase; this is purely for diagnostics.
+      - name: Upload digest output + logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ github.run_id }}
+          path: |
+            output/
+            logs/
+          if-no-files-found: ignore
+          retention-days: 30
