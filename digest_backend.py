@@ -188,6 +188,16 @@ RSS_FEEDS: list[tuple[str, str]] = [
     ("Seeking Alpha Market",      "https://seekingalpha.com/market_currents.xml"),
     ("Seeking Alpha General",     "https://seekingalpha.com/feed.xml"),
     ("Seeking Alpha Popular",     "https://seekingalpha.com/listing/most-popular-articles.xml"),
+    # Central banks — direct from the source for monetary policy signals
+    ("Federal Reserve",           "https://www.federalreserve.gov/feeds/press_all.xml"),
+    ("ECB Press",                 "https://www.ecb.europa.eu/rss/press.html"),
+    ("Bank of England",           "https://www.bankofengland.co.uk/rss/news"),
+    ("Bank of Japan",             "https://www.boj.or.jp/en/rss/whatsnew.xml"),
+    # European + Asian institutional coverage
+    ("FT Markets (via GNews)",    "https://news.google.com/rss/search?q=when:24h+site:ft.com+markets&hl=en-US&gl=US&ceid=US:en"),
+    ("Nikkei Asia Business",      "https://asia.nikkei.com/rss/feed/nar"),
+    ("China econ (via GNews)",    "https://news.google.com/rss/search?q=when:24h+%28China+OR+PBoC+OR+Beijing%29+economy&hl=en-US&gl=US&ceid=US:en"),
+    ("Japan econ (via GNews)",    "https://news.google.com/rss/search?q=when:24h+%28Japan+OR+BoJ+OR+Tokyo%29+%28economy+OR+markets%29&hl=en-US&gl=US&ceid=US:en"),
 ]
 
 # Yahoo Finance has a primary + fallback URL. Tried in order; first non-empty wins.

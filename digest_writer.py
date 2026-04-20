@@ -57,7 +57,7 @@ SONNET_OUTPUT_PRICE = 15.00 / 1_000_000
 
 MAX_COMPANY_SECTIONS = 7
 
-EVENT_TYPES = {"earnings", "corporate_action", "guidance", "analyst", "regulatory", "other"}
+EVENT_TYPES = {"earnings", "corporate_action", "guidance", "analyst", "regulatory", "capital_markets", "other"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -174,10 +174,13 @@ COMPANY_ID_SYSTEM = """You are a senior editor at an institutional market intell
 
 INCLUDE any of the following when a watchlist company is the primary subject:
 - earnings reports, pre-announcements, earnings previews ahead of known print dates
-- M&A, spinoffs, stake changes, buybacks, major capital return decisions
+- M&A, spinoffs, stake changes, major capital return decisions
 - company-issued guidance (raise, cut, reaffirmation, withdrawal)
 - sell-side analyst moves: ratings changes, price-target revisions, initiations, category calls — tag these as "analyst"
 - regulatory or legal events (investigations, settlements, approvals, fines)
+- capital markets activity: debt issuance, equity raises, secondary offerings, IPOs, share buybacks announced or executed, tender offers, credit facility arrangements — tag as "capital_markets"
+- private credit and fundraising: fund closes, LP commitments, strategy launches for alt managers (BX, KKR, APO, BLK); private credit deal announcements — tag as "capital_markets"
+- AI and technology developments that meaningfully affect the named company: AI infrastructure deals, chip partnerships, data center expansions, model releases, AI M&A, AI-driven product pivots — tag as "corporate_action" or "other"
 - material partnerships, customer wins, large contracts
 - executive departures or hires at CEO/CFO/key division head level
 - strategic pivots, layoffs, restructurings, cyber incidents, outages
@@ -191,18 +194,19 @@ EXCLUDE:
 
 event_type values:
 - "earnings"         — results, pre-announcements, previews tied to an upcoming print
-- "corporate_action" — M&A, spinoffs, buybacks, capital returns, exec changes, restructurings
+- "corporate_action" — M&A, spinoffs, exec changes, restructurings, layoffs, strategic pivots, partnerships, AI/tech deals
 - "guidance"         — the company itself updating forward-looking expectations
 - "analyst"          — sell-side ratings, price targets, initiations
 - "regulatory"       — lawsuits, regulator actions, compliance events
+- "capital_markets"  — debt/equity issuance, IPOs, secondaries, tender offers, buybacks, credit facilities, private credit deals, fund closes, LP commitments
 - "other"            — any material catalyst that doesn't cleanly fit above
 
 For each qualifying company, return one object:
 {
   "company_name": string,          // must match a watchlist name exactly
   "ticker": string,                // must match the watchlist ticker exactly
-  "event_type": "earnings" | "corporate_action" | "guidance" | "analyst" | "regulatory" | "other",
-  "headline": string,              // short label for the event, e.g. "Q1 2026 Results", "Price Target Lowered at JPM"
+  "event_type": "earnings" | "corporate_action" | "guidance" | "analyst" | "regulatory" | "capital_markets" | "other",
+  "headline": string,              // short label for the event, e.g. "Q1 2026 Results", "$15B Credit Fund Close", "Google AI Chip Partnership"
   "relevant_context_indices": [int, ...]   // indices into the provided context_items list
 }
 
