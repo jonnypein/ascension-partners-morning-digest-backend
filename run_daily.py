@@ -8,6 +8,7 @@ skipping NYSE holidays. Persists output to `output/digest_YYYY-MM-DD.json` and
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 import subprocess
@@ -19,6 +20,8 @@ from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
 import schedule
+
+from publish import publish_digest
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "output"
@@ -99,6 +102,14 @@ def run_pipeline() -> bool:
     out_path.write_text(writer.stdout)
     shutil.copyfile(out_path, latest_path)
     log.info("Digest saved to %s (%d bytes)", out_path, len(writer.stdout))
+
+    try:
+        digest = json.loads(writer.stdout)
+        publish_digest(digest)
+        log.info("Published to Supabase (date=%s)", digest.get("data_as_of"))
+    except Exception as exc:
+        log.exception("Supabase publish failed (local file still saved): %s", exc)
+
     return True
 
 
