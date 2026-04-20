@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 DIGESTS_TABLE = "digests"
 GUIDANCE_TABLE = "company_guidance"
 EARNINGS_CARDS_TABLE = "earnings_cards"
+COMPANY_PROFILES_TABLE = "company_profiles"
 
 
 def _supabase_env() -> tuple[str, str]:
@@ -79,6 +80,28 @@ def publish_earnings_card(card: dict) -> None:
             "Prefer": "resolution=merge-duplicates,return=minimal",
         },
         json=row,
+        timeout=30,
+    )
+    r.raise_for_status()
+
+
+def publish_company_profile(profile: dict) -> None:
+    """Upsert a company profile. Raises on HTTP failure.
+
+    Expects the dict shape produced by company_profile_builder.build_profile().
+    Conflict key is `ticker` — re-runs overwrite prior profiles cleanly.
+    """
+    url, key = _supabase_env()
+    r = httpx.post(
+        f"{url}/rest/v1/{COMPANY_PROFILES_TABLE}",
+        params={"on_conflict": "ticker"},
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+        json=profile,
         timeout=30,
     )
     r.raise_for_status()

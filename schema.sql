@@ -53,3 +53,31 @@ create policy "public read"
 
 create index if not exists earnings_cards_filed_at_idx
   on public.earnings_cards (filed_at desc);
+
+-- Research-note "library" layer (Phase 2). One row per watchlist ticker.
+-- Rebuilt annually from the company's latest 10-K Item 1 (Business).
+-- Public read so Lovable's `/companies/:ticker` page can render with the
+-- anon key; writes go through the pipeline's service-role key.
+create table if not exists public.company_profiles (
+  ticker                  text primary key,
+  company_name            text not null,
+  sector                  text,
+  business_description    text,
+  revenue_segments        jsonb,
+  geographic_exposure     jsonb,
+  key_products            jsonb,
+  primary_competitors     jsonb,
+  hq_location             text,
+  employee_count          int,
+  website                 text,
+  source_filing_url       text,
+  source_filing_accession text,
+  refreshed_at            timestamptz not null default now()
+);
+
+alter table public.company_profiles enable row level security;
+
+create policy "public read"
+  on public.company_profiles
+  for select
+  using (true);
