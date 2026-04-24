@@ -125,3 +125,59 @@ create policy "public read"
   on public.catalysts
   for select
   using (true);
+
+-- Phase 2c macro sensitivities: rolling correlation + beta of each
+-- stock's daily returns against a curated set of FRED macro series
+-- (yields, FX, commodities, credit spreads, VIX). Computed quarterly.
+-- One row per (ticker, series).
+create table if not exists public.macro_sensitivities (
+  ticker         text        not null,
+  series_id      text        not null,
+  series_name    text        not null,
+  correlation    numeric,
+  beta           numeric,
+  r_squared      numeric,
+  n_observations integer,
+  window_days    integer     not null,
+  direction      text        not null,
+  magnitude      text        not null,
+  computed_at    timestamptz not null default now(),
+  primary key (ticker, series_id)
+);
+
+create index if not exists macro_sensitivities_ticker_idx
+  on public.macro_sensitivities (ticker);
+
+alter table public.macro_sensitivities enable row level security;
+
+create policy "public read"
+  on public.macro_sensitivities
+  for select
+  using (true);
+
+-- Phase 2c consensus snapshots: point-in-time captures of analyst
+-- estimates, price targets, and recommendation distribution per ticker.
+-- Run weekly so revision trends accumulate over time; Lovable reads the
+-- most-recent row per ticker for the page, but historical rows enable
+-- revision analytics later.
+create table if not exists public.consensus_snapshots (
+  id                bigserial   primary key,
+  ticker            text        not null,
+  asof_date         date        not null,
+  revenue_estimates jsonb,
+  eps_estimates     jsonb,
+  price_targets     jsonb,
+  recommendations   jsonb,
+  created_at        timestamptz not null default now(),
+  unique (ticker, asof_date)
+);
+
+create index if not exists consensus_ticker_asof_idx
+  on public.consensus_snapshots (ticker, asof_date desc);
+
+alter table public.consensus_snapshots enable row level security;
+
+create policy "public read"
+  on public.consensus_snapshots
+  for select
+  using (true);
