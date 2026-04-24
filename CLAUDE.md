@@ -3,6 +3,14 @@
 Context for future Claude sessions on this repo. Keep it tight; update it
 when pipelines, schemas, or conventions change.
 
+## Start-of-session ritual
+
+1. Read `PLAN.md` — the living roadmap. "Currently in progress" tells you
+   where the last session stopped. "Next session" says what to do.
+2. Whenever you call `TodoWrite` with meaningful status changes, mirror
+   them into `PLAN.md`. The todo tool is in-session only; `PLAN.md` is
+   the persistent copy so future sessions don't lose context.
+
 ## Project
 
 Ascension Partners Daily Digest — a morning market-intelligence system
