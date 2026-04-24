@@ -14,27 +14,69 @@ forward from Mon/Tue). Weekend is idle._
 
 ## Next session (Monday 2026-04-27)
 
-1. **Check Mon 04:30 UTC GH Actions run** — first automated run since
-   the `digest_writer.py` retry/dump fix landed. Verify no parse
-   failures (check `digest.meta.warnings` in the published row).
-2. **Confirm Lovable rendering** — user still needs to paste the
-   Phase 2c Lovable prompt (Macro Sensitivities + Consensus sections
-   on `/companies/:ticker`). Prompt is in the Phase 2c shipping
-   message of this session. Also still need to paste the Phase 2b
-   prompt (Risk Profile + Catalysts).
-3. **Earnings pipeline watch** — first big test hits Tue 28/Wed 29
-   (AMZN/MSFT/GOOGL/META/AAPL all filing within 48h). Monitor
-   automated card generation in Supabase; fix whatever breaks.
+Highest priority items first.
 
-## Next week's plan (Phase 2c shipped Friday — so Mon/Tue freed up)
+1. **Check Mon 04:30 UTC GH Actions run landed cleanly.**
+   - Verify a new row exists in `digests` with date = `2026-04-24`
+     (Friday session) since this is the first run after the weekend.
+   - Inspect `digest.meta.warnings` for any parse failures from the
+     `digest_writer.py` retry/dump fix (CBRE and similar).
+   - If anything failed, `output/failed_parses_*.jsonl` should have
+     raw model outputs to diagnose.
+2. **User pastes pending Lovable prompts** (blocker for the UI to
+   show everything we've built):
+   - Phase 2b prompt — Risk Profile + Upcoming Catalysts sections on
+     `/companies/:ticker`. Prompt lives in a message from Friday.
+   - Phase 2c prompt — Consensus + Macro Sensitivities sections on
+     the same page. Prompt also in a Friday message.
+3. **Digest heading UX** — user flagged that "Digest for Thu 23 April"
+   reads stale on Friday morning. Lovable prompt for the fix was
+   written Friday; user just needs to paste it.
+4. **Clean BLK duplicate** in `earnings_cards`. Direct SQL:
+   `delete from earnings_cards where ticker='BLK' and fiscal_period
+   like 'Q1 2026 (three%';`
 
-| Day | Focus | Status |
-|---|---|---|
-| Mon 2026-04-27 | Close Phase 2a/2b failures if time (MS, SHEL, GE, BRK-B, WFC 10-K/20-F quirks). Paste pending Lovable prompts. Verify daily cron ran. | pending |
-| Tue 2026-04-28 | Live earnings begin (V reports). Pipeline watch. | pending |
-| Wed 2026-04-29 | **Peak earnings day** — MSFT, META, AMZN, GOOGL, plus AAPL Thu. Pipeline watch; fix whatever breaks. | pending |
-| Thu 2026-04-30 | AAPL + continued watch. Clean up BLK duplicate row. | pending |
-| Fri 2026-05-01 | Week retro. Decide whether to pick up house views or transcripts next. | pending |
+## Rest of next week
+
+### Tue 2026-04-28 — Earnings begin
+- **V reports** (after close). Monitor Wed-morning auto-run to
+  confirm the card lands with the writer fix applied.
+- If time: investigate why `GE/RTX/AXP/CBRE` earnings cards didn't
+  auto-generate from this past week's prints. Suspect lookback
+  window (36h) missed some Tuesday-morning filings. Widening to
+  48h might fix.
+
+### Wed 2026-04-29 — Peak earnings day
+- **MSFT, META, AMZN, GOOGL** all report within 24h. All after-close
+  US time, so cards should appear in Thu morning's 06:30 UTC cron run.
+- Manual midday trigger (`run_daily.py --now` or earnings-only
+  pipeline) can pull cards immediately after each filing rather than
+  waiting for the next day's cron.
+- Budget 45-60 min for any parse or extraction bugs live traffic
+  surfaces on these specific filers.
+
+### Thu 2026-04-30 — AAPL
+- AAPL reports after close.
+- If there's slack, close Phase 2a failures: MS uses column-table
+  TOC, SHEL files 20-F, GE uses non-standard body headings, BRK-B
+  unusual, WFC intermittent. A day of work for 15% watchlist payoff
+  — skip if live-earnings takes priority.
+
+### Fri 2026-05-01 — Retro + next-phase decision
+- What landed, what's still rough, what next week's priority is.
+- **Phase 2d decision**: house views (user writes theses → Ascension
+  View overlay on cards), or transcripts (Motley Fool scrape → real
+  guidance quality), or something else. Decision point for the user.
+
+## Week-at-a-glance (detail above)
+
+| Day | Focus |
+|---|---|
+| Mon | Check cron. Paste 2 Lovable prompts. Fix digest heading. Clean BLK. |
+| Tue | V earnings. Maybe widen earnings lookback to 48h. |
+| Wed | **MSFT/META/AMZN/GOOGL report** — live pipeline watch. |
+| Thu | AAPL reports. Close 2a/2b profile failures if time. |
+| Fri | Retro. Phase 2d decision (house views vs transcripts). |
 
 ## Known issues to tackle when time allows
 
