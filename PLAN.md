@@ -5,34 +5,36 @@ session. Update it whenever you update `TodoWrite` with meaningful status
 changes — otherwise the in-session todos vanish and future sessions lose
 context.
 
-Last updated: 2026-04-24 (Friday)
+Last updated: 2026-04-24 (Friday, late-afternoon)
 
 ## Currently in progress
 
-_Nothing — Phase 2b shipped today. Weekend is idle._
+_Nothing. Phase 2b and Phase 2c both shipped today (user pulled 2c
+forward from Mon/Tue). Weekend is idle._
 
 ## Next session (Monday 2026-04-27)
 
-1. **Check Mon 04:30 UTC GH Actions run** — first automated run since the
-   `digest_writer.py` retry/dump fix landed. Verify no parse failures
-   (check `digest.meta.warnings` in the published row).
-2. **Phase 2c: macro sensitivities** — build
-   `sensitivity_builder.py`. Pure Python/pandas: pull 3 years of daily
-   returns from yfinance per ticker, compute rolling correlations vs
-   FRED macro series (10Y, DXY, Brent, gold, CPI change, HY spread,
-   VIX). New `macro_sensitivities` Supabase table. One new section on
-   `/companies/:ticker`. Estimated ~2 hours.
-3. **Sketch a Lovable prompt** for the Macro Sensitivities section.
+1. **Check Mon 04:30 UTC GH Actions run** — first automated run since
+   the `digest_writer.py` retry/dump fix landed. Verify no parse
+   failures (check `digest.meta.warnings` in the published row).
+2. **Confirm Lovable rendering** — user still needs to paste the
+   Phase 2c Lovable prompt (Macro Sensitivities + Consensus sections
+   on `/companies/:ticker`). Prompt is in the Phase 2c shipping
+   message of this session. Also still need to paste the Phase 2b
+   prompt (Risk Profile + Catalysts).
+3. **Earnings pipeline watch** — first big test hits Tue 28/Wed 29
+   (AMZN/MSFT/GOOGL/META/AAPL all filing within 48h). Monitor
+   automated card generation in Supabase; fix whatever breaks.
 
-## This week's plan (the original Tue/Wed/Thu/Fri has shifted by a week)
+## Next week's plan (Phase 2c shipped Friday — so Mon/Tue freed up)
 
 | Day | Focus | Status |
 |---|---|---|
-| Mon 2026-04-27 | Phase 2c: macro sensitivities | pending |
-| Tue 2026-04-28 | Phase 2c: consensus framework (`consensus_builder.py`, weekly snapshots) | pending |
-| Wed 2026-04-29 | **Live earnings day** — MSFT, META, AMZN, GOOGL all report. Monitor pipeline, debug any parse/fetch issues. | pending |
-| Thu 2026-04-30 | **Live earnings** — AAPL reports. Polish + close Phase 2a/2b gaps. | pending |
-| Fri 2026-05-01 | Week retro. Decide next focus. | pending |
+| Mon 2026-04-27 | Close Phase 2a/2b failures if time (MS, SHEL, GE, BRK-B, WFC 10-K/20-F quirks). Paste pending Lovable prompts. Verify daily cron ran. | pending |
+| Tue 2026-04-28 | Live earnings begin (V reports). Pipeline watch. | pending |
+| Wed 2026-04-29 | **Peak earnings day** — MSFT, META, AMZN, GOOGL, plus AAPL Thu. Pipeline watch; fix whatever breaks. | pending |
+| Thu 2026-04-30 | AAPL + continued watch. Clean up BLK duplicate row. | pending |
+| Fri 2026-05-01 | Week retro. Decide whether to pick up house views or transcripts next. | pending |
 
 ## Known issues to tackle when time allows
 
