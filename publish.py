@@ -21,6 +21,10 @@ DIGESTS_TABLE = "digests"
 GUIDANCE_TABLE = "company_guidance"
 EARNINGS_CARDS_TABLE = "earnings_cards"
 COMPANY_PROFILES_TABLE = "company_profiles"
+RISK_PROFILES_TABLE = "risk_profiles"
+CATALYSTS_TABLE = "catalysts"
+MACRO_SENSITIVITIES_TABLE = "macro_sensitivities"
+CONSENSUS_SNAPSHOTS_TABLE = "consensus_snapshots"
 
 
 def _supabase_env() -> tuple[str, str]:
@@ -80,6 +84,85 @@ def publish_earnings_card(card: dict) -> None:
             "Prefer": "resolution=merge-duplicates,return=minimal",
         },
         json=row,
+        timeout=30,
+    )
+    r.raise_for_status()
+
+
+def publish_macro_sensitivities(rows: list[dict]) -> None:
+    """Upsert a batch of macro_sensitivities rows. Conflict key (ticker, series_id)."""
+    if not rows:
+        return
+    url, key = _supabase_env()
+    r = httpx.post(
+        f"{url}/rest/v1/{MACRO_SENSITIVITIES_TABLE}",
+        params={"on_conflict": "ticker,series_id"},
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+        json=rows,
+        timeout=60,
+    )
+    r.raise_for_status()
+
+
+def publish_consensus_snapshot(row: dict) -> None:
+    """Upsert a consensus_snapshots row. Conflict key (ticker, asof_date) so
+    re-running the same day is idempotent but distinct days accumulate as
+    historical revisions data."""
+    url, key = _supabase_env()
+    r = httpx.post(
+        f"{url}/rest/v1/{CONSENSUS_SNAPSHOTS_TABLE}",
+        params={"on_conflict": "ticker,asof_date"},
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+        json=row,
+        timeout=30,
+    )
+    r.raise_for_status()
+
+
+def publish_risk_profile(profile: dict) -> None:
+    """Upsert a risk profile. Keyed on `ticker`."""
+    url, key = _supabase_env()
+    r = httpx.post(
+        f"{url}/rest/v1/{RISK_PROFILES_TABLE}",
+        params={"on_conflict": "ticker"},
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+        json=profile,
+        timeout=30,
+    )
+    r.raise_for_status()
+
+
+def publish_catalysts(rows: list[dict]) -> None:
+    """Upsert a batch of catalyst rows. Conflict key (ticker, event_date, event_type)
+    means re-runs of the same earnings date are idempotent."""
+    if not rows:
+        return
+    url, key = _supabase_env()
+    r = httpx.post(
+        f"{url}/rest/v1/{CATALYSTS_TABLE}",
+        params={"on_conflict": "ticker,event_date,event_type"},
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+        json=rows,
         timeout=30,
     )
     r.raise_for_status()

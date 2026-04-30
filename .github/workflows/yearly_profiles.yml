@@ -5,6 +5,10 @@ name: Yearly Company Profiles
 # prior fiscal year. Off-calendar filers (AAPL Sep, MSFT Jun) get picked
 # up the following year — close enough for a once-a-year refresh.
 #
+# Runs both 10-K-derived builders together: company profiles (Item 1
+# Business) and risk profiles (Item 1A Risk Factors). Same source filing,
+# same cadence, ~$5-7 combined Anthropic spend per run.
+#
 # To refresh on demand, hit "Run workflow" on the Actions tab.
 on:
   schedule:
@@ -21,7 +25,7 @@ concurrency:
 jobs:
   build-profiles:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -36,12 +40,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Build company profiles
+      - name: Build company profiles (Item 1 Business)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python company_profile_builder.py
+
+      - name: Build risk profiles (Item 1A Risk Factors)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python risk_profile_builder.py
 
       - name: Upload logs
         if: always()

@@ -81,3 +81,112 @@ create policy "public read"
   on public.company_profiles
   for select
   using (true);
+
+-- Phase 2b risk profiles: distilled summary of Item 1A "Risk Factors" from
+-- each company's 10-K. One row per ticker; rebuilt annually after 10-K.
+create table if not exists public.risk_profiles (
+  ticker                  text primary key,
+  risks                   jsonb not null,
+  source_filing_url       text,
+  source_filing_accession text,
+  refreshed_at            timestamptz not null default now()
+);
+
+alter table public.risk_profiles enable row level security;
+
+create policy "public read"
+  on public.risk_profiles
+  for select
+  using (true);
+
+-- Phase 2b catalysts: forward-looking events per ticker. Earnings dates
+-- refreshed from yfinance each pipeline run; non-earnings events can be
+-- inserted manually or by future builders (IR calendar scrapers, etc.).
+create table if not exists public.catalysts (
+  id          bigserial primary key,
+  ticker      text        not null,
+  event_date  date        not null,
+  event_type  text        not null,           -- earnings | analyst_day | regulatory | product | other
+  description text,
+  source      text        not null default 'manual',
+  created_at  timestamptz not null default now(),
+  unique (ticker, event_date, event_type)
+);
+
+create index if not exists catalysts_event_date_idx
+  on public.catalysts (event_date);
+
+create index if not exists catalysts_ticker_date_idx
+  on public.catalysts (ticker, event_date);
+
+alter table public.catalysts enable row level security;
+
+create policy "public read"
+  on public.catalysts
+  for select
+  using (true);
+
+-- Phase 2c macro sensitivities: rolling correlation + beta of each
+-- stock's daily returns against a curated set of FRED macro series
+-- (yields, FX, commodities, credit spreads, VIX). Computed quarterly.
+-- One row per (ticker, series).
+create table if not exists public.macro_sensitivities (
+  ticker         text        not null,
+  series_id      text        not null,
+  series_name    text        not null,
+  correlation    numeric,
+  beta           numeric,
+  r_squared      numeric,
+  n_observations integer,
+  window_days    integer     not null,
+  direction      text        not null,
+  magnitude      text        not null,
+  computed_at    timestamptz not null default now(),
+  primary key (ticker, series_id)
+);
+
+create index if not exists macro_sensitivities_ticker_idx
+  on public.macro_sensitivities (ticker);
+
+alter table public.macro_sensitivities enable row level security;
+
+create policy "public read"
+  on public.macro_sensitivities
+  for select
+  using (true);
+
+-- Phase 2c consensus snapshots: point-in-time captures of analyst
+-- estimates, price targets, and recommendation distribution per ticker.
+-- Run weekly so revision trends accumulate over time; Lovable reads the
+-- most-recent row per ticker for the page, but historical rows enable
+-- revision analytics later.
+create table if not exists public.consensus_snapshots (
+  id                bigserial   primary key,
+  ticker            text        not null,
+  asof_date         date        not null,
+  revenue_estimates jsonb,
+  eps_estimates     jsonb,
+  price_targets     jsonb,
+  recommendations   jsonb,
+  -- Added 2026-04-30: trailing growth rates + valuation multiples (forward P/E
+  -- FY0/FY1, Price/FCF TTM, EV/EBITDA TTM) + last 8 quarters of EPS beats +
+  -- fiscal_year_end. Forward FCF / forward EBITDA require a paid data source
+  -- and are intentionally out of scope; only forward P/E goes forward today.
+  fundamentals     jsonb,
+  created_at        timestamptz not null default now(),
+  unique (ticker, asof_date)
+);
+
+-- One-shot migration for tables that already exist:
+alter table public.consensus_snapshots
+  add column if not exists fundamentals jsonb;
+
+create index if not exists consensus_ticker_asof_idx
+  on public.consensus_snapshots (ticker, asof_date desc);
+
+alter table public.consensus_snapshots enable row level security;
+
+create policy "public read"
+  on public.consensus_snapshots
+  for select
+  using (true);

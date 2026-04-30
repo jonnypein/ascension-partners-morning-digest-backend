@@ -25,7 +25,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -347,28 +347,57 @@ def step_b_company_section(
         "sources":      sources,
     }
 
+    raw_texts: list[str] = []
+    parsed = None
+    for attempt in range(2):
+        retry_user_msg = user_msg
+        if attempt == 1:
+            # Second attempt: stricter framing. Useful when the first response
+            # wrapped the JSON in prose ("Here's the section:...") or put the
+            # paragraphs in a different shape.
+            retry_user_msg += (
+                "\n\nReturn ONLY the JSON object specified in the system prompt "
+                "(starting with `{` and ending with `}`). No preamble, no markdown "
+                "code fence, no prose outside the JSON. Exactly this shape: "
+                '{"paragraphs": [string, string, string]}.'
+            )
+        try:
+            resp = client.messages.create(
+                model=SONNET_MODEL,
+                max_tokens=1500,
+                system=COMPANY_SECTION_SYSTEM,
+                messages=[{"role": "user", "content": retry_user_msg}],
+            )
+            cost.record(SONNET_MODEL, resp.usage)
+            raw = resp.content[0].text if resp.content else ""
+            raw_texts.append(raw)
+            parsed = _parse_json(raw)
+        except Exception as exc:
+            warnings.append(f"Step B: {company['ticker']} crashed: {exc}")
+            return {**shell, "paragraphs": [f"(section generation failed: {exc})"]}
+
+        if isinstance(parsed, dict) and isinstance(parsed.get("paragraphs"), list) and parsed["paragraphs"]:
+            return {**shell, "paragraphs": [str(p) for p in parsed["paragraphs"]]}
+
+    # Both attempts failed to produce a parseable response. Dump both raw
+    # outputs to a side file so we can tighten the prompt or parser later.
+    warnings.append(f"Step B: {company['ticker']} returned unparseable output after 2 attempts")
     try:
-        resp = client.messages.create(
-            model=SONNET_MODEL,
-            max_tokens=1500,
-            system=COMPANY_SECTION_SYSTEM,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        cost.record(SONNET_MODEL, resp.usage)
-        parsed = _parse_json(resp.content[0].text if resp.content else "")
-    except Exception as exc:
-        warnings.append(f"Step B: {company['ticker']} crashed: {exc}")
-        return {**shell, "paragraphs": [f"(section generation failed: {exc})"]}
-
-    paragraphs = None
-    if isinstance(parsed, dict) and isinstance(parsed.get("paragraphs"), list):
-        paragraphs = [str(p) for p in parsed["paragraphs"]]
-
-    if not paragraphs:
-        warnings.append(f"Step B: {company['ticker']} returned unparseable output")
-        return {**shell, "paragraphs": ["(writer output unparseable)"]}
-
-    return {**shell, "paragraphs": paragraphs}
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        out_dir = os.path.join(script_dir, "output")
+        os.makedirs(out_dir, exist_ok=True)
+        today = datetime.now(timezone.utc).date().isoformat()
+        dump_path = os.path.join(out_dir, f"failed_parses_{today}.jsonl")
+        with open(dump_path, "a") as f:
+            f.write(json.dumps({
+                "ticker":    company["ticker"],
+                "headline":  company["headline"],
+                "attempts":  raw_texts,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }) + "\n")
+    except Exception:
+        pass  # best-effort; don't let a disk write break the pipeline
+    return {**shell, "paragraphs": ["(writer output unparseable)"]}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

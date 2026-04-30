@@ -110,11 +110,24 @@ def run_pipeline() -> bool:
     # fiscal_period), so cards surface on their actual filing date in Lovable
     # rather than being pinned to whichever daily run generated them.
     try:
-        earnings_cards = run_earnings_pipeline()
-        if earnings_cards:
-            log.info("Earnings pipeline produced %d card(s)", len(earnings_cards))
+        earnings_payload = run_earnings_pipeline()
+        earnings_cards = earnings_payload.get("earnings_cards", [])
+        meta = earnings_payload.get("meta", {})
+        if earnings_payload:
+            # Persist the writer's full payload (cards + meta) so the artifact
+            # exposes bundles_in / cards_out / warnings — visible without
+            # grepping workflow logs. Added after the Apr 24 silent-drop
+            # incident.
             earnings_path = OUTPUT_DIR / f"earnings_cards_{today.isoformat()}.json"
-            earnings_path.write_text(json.dumps({"cards": earnings_cards}))
+            earnings_path.write_text(json.dumps(earnings_payload))
+            bundles_in = meta.get("bundles_in")
+            cards_out = meta.get("cards_out", len(earnings_cards))
+            if bundles_in and cards_out != bundles_in:
+                log.warning(
+                    "Earnings writer dropped %d/%d bundle(s); see meta.warnings: %s",
+                    bundles_in - cards_out, bundles_in, meta.get("warnings"),
+                )
+            log.info("Earnings pipeline produced %d card(s)", len(earnings_cards))
             for card in earnings_cards:
                 _publish_card(card)
                 _persist_card_guidance(card)
@@ -133,8 +146,13 @@ def run_pipeline() -> bool:
 PERSISTABLE_GUIDANCE = {"raised", "lowered", "maintained", "initiated"}
 
 
-def run_earnings_pipeline() -> list[dict]:
-    """Pipe earnings_backend.py into earnings_writer.py and return the card list."""
+def run_earnings_pipeline() -> dict:
+    """Pipe earnings_backend.py into earnings_writer.py and return the writer's full payload.
+
+    Returns the writer's JSON payload (`{generated_at, earnings_cards, meta}`)
+    so callers can inspect `meta.bundles_in / cards_out / warnings`.
+    Returns `{}` on any failure so the caller can short-circuit.
+    """
     log.info("Running earnings backend")
     backend = subprocess.run(
         [sys.executable, "earnings_backend.py"],
@@ -144,7 +162,7 @@ def run_earnings_pipeline() -> list[dict]:
     )
     if backend.returncode != 0:
         log.error("Earnings backend failed (rc=%s): %s", backend.returncode, backend.stderr.strip())
-        return []
+        return {}
     if backend.stderr.strip():
         log.info("Earnings backend stderr: %s", backend.stderr.strip())
 
@@ -152,7 +170,7 @@ def run_earnings_pipeline() -> list[dict]:
     bundles = json.loads(backend.stdout).get("bundles", [])
     if not bundles:
         log.info("Earnings backend: no recent 8-Ks in watchlist")
-        return []
+        return {}
 
     log.info("Running earnings writer (%d bundle(s))", len(bundles))
     writer = subprocess.run(
@@ -164,12 +182,11 @@ def run_earnings_pipeline() -> list[dict]:
     )
     if writer.returncode != 0:
         log.error("Earnings writer failed (rc=%s): %s", writer.returncode, writer.stderr.strip())
-        return []
+        return {}
     if writer.stderr.strip():
         log.info("Earnings writer stderr: %s", writer.stderr.strip())
 
-    payload = json.loads(writer.stdout)
-    return payload.get("earnings_cards", [])
+    return json.loads(writer.stdout)
 
 
 def _publish_card(card: dict) -> None:

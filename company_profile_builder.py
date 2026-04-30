@@ -35,13 +35,19 @@ from digest_backend import WATCHLIST
 
 UA = "Ascension Partners Morning Digest jonathan.o.k.pein@gmail.com"
 SEC_REQUEST_DELAY = 0.12
-SEC_TIMEOUT = 30
+# 180s, not 30s: MS and SHEL 10-Ks are ~10MB each and the SEC's edgar host
+# can take >30s to deliver them. The previous 30s ceiling silently failed.
+SEC_TIMEOUT = 180
 SEC_CLIENT = httpx.Client(headers={"User-Agent": UA}, timeout=SEC_TIMEOUT)
 
 SONNET_MODEL = "claude-sonnet-4-6"
 SONNET_INPUT_PRICE_PER_MTOK = 3.0
 SONNET_OUTPUT_PRICE_PER_MTOK = 15.0
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+HAIKU_INPUT_PRICE_PER_MTOK = 0.80
+HAIKU_OUTPUT_PRICE_PER_MTOK = 4.00
 MAX_ITEM_1_CHARS = 120_000   # ~30k tokens; Item 1 sections are rarely larger
+LLM_EXTRACT_INPUT_MAX_CHARS = 300_000  # ~75k tokens; covers any realistic Item 1 / 1A position
 
 
 PROFILE_SYSTEM = """You are an equity research analyst. You are given Item 1 "Business" from a company's 10-K filing. Extract a structured company profile for a buy-side daily digest system.
@@ -97,6 +103,15 @@ def get_latest_annual_filing(cik: str) -> dict | None:
 def _clean_filing_text(raw_html: str) -> str:
     """Convert an SEC HTML document into flattened, heading-friendly text."""
     soup = BeautifulSoup(raw_html, "html.parser")
+    # Strip metadata-only iXBRL blocks before flattening. Workiva-generated
+    # 10-Ks (MS, SHEL, modern bank filings) put a hidden div at the top of
+    # <body> containing <ix:header> with thousands of us-gaap/fasb.org URIs
+    # that drown the narrative when get_text flattens the document. We keep
+    # <ix:nonNumeric> and <ix:nonFraction> wrappers though — those wrap real
+    # narrative text and numbers in the visible body.
+    for tag_name in ("ix:header", "ix:references", "ix:resources", "ix:hidden"):
+        for tag in soup.find_all(tag_name):
+            tag.decompose()
     for tag in soup(["script", "style"]):
         tag.decompose()
     text = soup.get_text(" ", strip=True)
@@ -114,15 +129,26 @@ def _clean_filing_text(raw_html: str) -> str:
 def fetch_primary_doc(cik_no_zero: str, accession: str, primary_doc: str) -> tuple[str, str]:
     """Return (filing_url, flattened_text) for the 10-K narrative body.
 
-    The `primaryDocument` in SEC's submissions.json is sometimes the XBRL
-    instance rather than the narrative 10-K. When the named primary doc
-    doesn't contain both "Item 1" and "Item 1A" markers, fall back to the
-    filing index and try other HTM files in size order (largest first).
+    Tries to locate the file containing both "Item 1" and "Item 1A" markers.
+    The `primaryDocument` from SEC's submissions feed is sometimes the XBRL
+    instance rather than the narrative; fallback walks the filing index by
+    size descending.
+
+    If no candidate has both markers (e.g. MS uses a column-table TOC where
+    "Item 1A" appears as "Risk Factors 1A" after flatten, or filings whose
+    Item-headings are absent entirely), return the LARGEST successfully
+    fetched + cleaned doc as a best-effort source for the LLM fallback path.
     """
     acc_no_dash = accession.replace("-", "")
     base = f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{acc_no_dash}"
 
+    # Track the largest successfully-cleaned doc as a loose fallback. Used
+    # when no candidate matches both Item-markers — the LLM extractor can
+    # still find sections that the regex misses.
+    loose_best: tuple[str, str] = ("", "")
+
     def _try(filename: str) -> tuple[str, str] | None:
+        nonlocal loose_best
         url = f"{base}/{filename}"
         time.sleep(SEC_REQUEST_DELAY)
         try:
@@ -131,23 +157,23 @@ def fetch_primary_doc(cik_no_zero: str, accession: str, primary_doc: str) -> tup
         except Exception:
             return None
         text = _clean_filing_text(r.text)
+        if len(text) > len(loose_best[1]):
+            loose_best = (url, text)
         if _ITEM_1_START_RX.search(text) and _ITEM_1A_START_RX.search(text):
             return url, text
         return None
 
-    # First attempt: the primary document the submissions feed named.
     primary_result = _try(primary_doc)
     if primary_result:
         return primary_result
 
-    # Fallback: walk the filing index, try other HTM files by size descending.
     time.sleep(SEC_REQUEST_DELAY)
     try:
         r = SEC_CLIENT.get(f"{base}/index.json")
         r.raise_for_status()
         items = r.json()["directory"]["item"]
     except Exception:
-        return f"{base}/{primary_doc}", ""
+        return loose_best if loose_best[1] else (f"{base}/{primary_doc}", "")
 
     candidates = [
         it for it in items
@@ -166,8 +192,65 @@ def fetch_primary_doc(cik_no_zero: str, accession: str, primary_doc: str) -> tup
         if found:
             return found
 
-    # Nothing worked — return the primary doc URL with whatever text we got.
-    return f"{base}/{primary_doc}", ""
+    # Nothing matched both Item-markers. Return the largest doc we cleaned —
+    # the LLM fallback can still extract sections from it.
+    return loose_best if loose_best[1] else (f"{base}/{primary_doc}", "")
+
+
+def fetch_full_filing_text(cik_no_zero: str, accession: str, primary_doc: str) -> str:
+    """LLM-fallback companion to fetch_primary_doc: concatenate the primary
+    document text with the largest other narrative .htm in the filing.
+
+    Wraparound filings (WFC's primary is a thin cover; the body lives in
+    EX-13) are the motivating case — fetch_primary_doc's strict marker
+    check accepts the cover, but the cover only has TOC-level Item 1A
+    references, so the LLM extractor needs the EX-13 attachment too. For
+    non-wraparound filings the extra attachment is harmless context.
+    """
+    acc_no_dash = accession.replace("-", "")
+    base = f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{acc_no_dash}"
+
+    def _fetch(filename: str) -> str:
+        time.sleep(SEC_REQUEST_DELAY)
+        try:
+            r = SEC_CLIENT.get(f"{base}/{filename}")
+            r.raise_for_status()
+            return _clean_filing_text(r.text)
+        except Exception:
+            return ""
+
+    primary_text = _fetch(primary_doc)
+
+    try:
+        time.sleep(SEC_REQUEST_DELAY)
+        r = SEC_CLIENT.get(f"{base}/index.json")
+        r.raise_for_status()
+        items = r.json()["directory"]["item"]
+    except Exception:
+        return primary_text
+
+    candidates = [
+        it for it in items
+        if it["name"].endswith(".htm")
+        and it["name"] != primary_doc
+        and not it["name"].startswith("R")
+        and "FilingSummary" not in it["name"]
+    ]
+    try:
+        candidates.sort(key=lambda it: int(it.get("size", 0)), reverse=True)
+    except Exception:
+        pass
+
+    extra_text = _fetch(candidates[0]["name"]) if candidates else ""
+    if not extra_text:
+        return primary_text
+    # Put the LARGER doc first so that downstream truncation
+    # (LLM_EXTRACT_INPUT_MAX_CHARS) keeps the doc most likely to contain the
+    # narrative body. WFC's EX-13 is 11x its primary cover; reversing the
+    # order puts Item 1A's body within the 300k char window.
+    if len(extra_text) > len(primary_text):
+        return extra_text + "\n\n" + primary_text
+    return primary_text + "\n\n" + extra_text
 
 
 # 10-K headings are unreliably spaced after HTML-to-text flattening (e.g.
@@ -219,6 +302,52 @@ def extract_item_1(text: str) -> str:
     if len(chunk) > MAX_ITEM_1_CHARS:
         chunk = chunk[:MAX_ITEM_1_CHARS]
     return chunk
+
+
+_EXTRACT_SECTION_SYSTEM = """You are extracting a specific section from an SEC annual filing. Return ONLY the verbatim section text, with no preamble, commentary, or markdown.
+
+Forms and section equivalents:
+- 10-K Item 1 "Business" or 20-F Item 4 "Information on the Company" — the company's business description.
+- 10-K Item 1A "Risk Factors" or 20-F Item 3.D "Risk Factors" — the company's risk factors.
+- Some filers use unconventional headings (column-table TOCs, all-caps, abbreviated). Match by content if a labeled heading isn't present.
+
+Begin output at the section heading; end immediately before the next item heading. If the requested section truly cannot be found, return the literal string `__NOT_FOUND__` and nothing else."""
+
+
+def extract_section_via_llm(
+    client: anthropic.Anthropic,
+    full_text: str,
+    target: str,
+) -> tuple[str, dict]:
+    """Fallback section extraction: ask Haiku to locate and return the
+    verbatim section text. Used when the regex extractors return empty —
+    typically for column-table TOCs (MS), 20-F filings (SHEL),
+    non-standard headings (GE), or otherwise unconventional layouts.
+
+    Returns (extracted_text, usage_dict). extracted_text is empty if the
+    section couldn't be located. The fallback is deliberately bounded by
+    LLM_EXTRACT_INPUT_MAX_CHARS so cost is predictable.
+    """
+    truncated = full_text[:LLM_EXTRACT_INPUT_MAX_CHARS]
+    user_msg = f"Target section: {target}\n\n--- Filing text begins ---\n\n{truncated}"
+    try:
+        resp = client.messages.create(
+            model=HAIKU_MODEL,
+            max_tokens=20_000,
+            system=_EXTRACT_SECTION_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+    except Exception as exc:
+        return "", {"input_tokens": 0, "output_tokens": 0, "error": str(exc)}
+
+    text = resp.content[0].text if resp.content else ""
+    usage = {
+        "input_tokens": resp.usage.input_tokens,
+        "output_tokens": resp.usage.output_tokens,
+    }
+    if "__NOT_FOUND__" in text or len(text.strip()) < 500:
+        return "", usage
+    return text.strip(), usage
 
 
 def _strip_fences(text: str) -> str:
@@ -342,6 +471,8 @@ def main() -> int:
 
     total_in = 0
     total_out = 0
+    haiku_in = 0
+    haiku_out = 0
     ok = 0
     fail = 0
     for name, ticker, sector in targets:
@@ -360,9 +491,26 @@ def main() -> int:
             _, text = fetch_primary_doc(cik_no_zero, filing["accessionNumber"], filing["primaryDocument"])
             item_1 = extract_item_1(text)
             if not item_1 or len(item_1) < 500:
-                print(f"[profile] {ticker}: Item 1 extraction too short ({len(item_1)} chars) — skipping", file=sys.stderr)
-                fail += 1
-                continue
+                # Regex path failed — common for column-table TOCs, 20-Fs, or
+                # non-standard headings. Fall back to LLM-based extraction with
+                # broader input (primary doc + largest attachment) so wraparound
+                # filings like WFC also have their body content available.
+                print(
+                    f"[profile] {ticker}: regex Item 1 too short ({len(item_1)} chars) — trying LLM fallback",
+                    file=sys.stderr,
+                )
+                full_text = fetch_full_filing_text(cik_no_zero, filing["accessionNumber"], filing["primaryDocument"])
+                item_1, usage = extract_section_via_llm(client, full_text, "Item 1 (Business)")
+                haiku_in += usage.get("input_tokens", 0)
+                haiku_out += usage.get("output_tokens", 0)
+                if not item_1 or len(item_1) < 500:
+                    print(
+                        f"[profile] {ticker}: LLM fallback also failed ({len(item_1)} chars) — skipping",
+                        file=sys.stderr,
+                    )
+                    fail += 1
+                    continue
+                print(f"[profile] {ticker}: LLM fallback succeeded ({len(item_1)} chars)", file=sys.stderr)
         except Exception as exc:
             print(f"[profile] {ticker}: fetch/extract failed: {exc}", file=sys.stderr)
             fail += 1
@@ -386,9 +534,11 @@ def main() -> int:
                 print(f"[profile] {ticker}: publish failed: {exc}", file=sys.stderr)
                 fail += 1
 
-    cost = total_in / 1_000_000 * SONNET_INPUT_PRICE_PER_MTOK + total_out / 1_000_000 * SONNET_OUTPUT_PRICE_PER_MTOK
+    sonnet_cost = total_in / 1_000_000 * SONNET_INPUT_PRICE_PER_MTOK + total_out / 1_000_000 * SONNET_OUTPUT_PRICE_PER_MTOK
+    haiku_cost = haiku_in / 1_000_000 * HAIKU_INPUT_PRICE_PER_MTOK + haiku_out / 1_000_000 * HAIKU_OUTPUT_PRICE_PER_MTOK
+    cost = sonnet_cost + haiku_cost
     print(
-        f"[profile] done: {ok} ok / {fail} failed  |  {total_in:,} in / {total_out:,} out tokens  |  ${cost:.4f}",
+        f"[profile] done: {ok} ok / {fail} failed  |  Sonnet {total_in:,}/{total_out:,} + Haiku-fallback {haiku_in:,}/{haiku_out:,}  |  ${cost:.4f}",
         file=sys.stderr,
     )
     return 0 if fail == 0 else 1
