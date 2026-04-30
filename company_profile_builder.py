@@ -103,6 +103,15 @@ def get_latest_annual_filing(cik: str) -> dict | None:
 def _clean_filing_text(raw_html: str) -> str:
     """Convert an SEC HTML document into flattened, heading-friendly text."""
     soup = BeautifulSoup(raw_html, "html.parser")
+    # Strip metadata-only iXBRL blocks before flattening. Workiva-generated
+    # 10-Ks (MS, SHEL, modern bank filings) put a hidden div at the top of
+    # <body> containing <ix:header> with thousands of us-gaap/fasb.org URIs
+    # that drown the narrative when get_text flattens the document. We keep
+    # <ix:nonNumeric> and <ix:nonFraction> wrappers though — those wrap real
+    # narrative text and numbers in the visible body.
+    for tag_name in ("ix:header", "ix:references", "ix:resources", "ix:hidden"):
+        for tag in soup.find_all(tag_name):
+            tag.decompose()
     for tag in soup(["script", "style"]):
         tag.decompose()
     text = soup.get_text(" ", strip=True)
@@ -120,15 +129,26 @@ def _clean_filing_text(raw_html: str) -> str:
 def fetch_primary_doc(cik_no_zero: str, accession: str, primary_doc: str) -> tuple[str, str]:
     """Return (filing_url, flattened_text) for the 10-K narrative body.
 
-    The `primaryDocument` in SEC's submissions.json is sometimes the XBRL
-    instance rather than the narrative 10-K. When the named primary doc
-    doesn't contain both "Item 1" and "Item 1A" markers, fall back to the
-    filing index and try other HTM files in size order (largest first).
+    Tries to locate the file containing both "Item 1" and "Item 1A" markers.
+    The `primaryDocument` from SEC's submissions feed is sometimes the XBRL
+    instance rather than the narrative; fallback walks the filing index by
+    size descending.
+
+    If no candidate has both markers (e.g. MS uses a column-table TOC where
+    "Item 1A" appears as "Risk Factors 1A" after flatten, or filings whose
+    Item-headings are absent entirely), return the LARGEST successfully
+    fetched + cleaned doc as a best-effort source for the LLM fallback path.
     """
     acc_no_dash = accession.replace("-", "")
     base = f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{acc_no_dash}"
 
+    # Track the largest successfully-cleaned doc as a loose fallback. Used
+    # when no candidate matches both Item-markers — the LLM extractor can
+    # still find sections that the regex misses.
+    loose_best: tuple[str, str] = ("", "")
+
     def _try(filename: str) -> tuple[str, str] | None:
+        nonlocal loose_best
         url = f"{base}/{filename}"
         time.sleep(SEC_REQUEST_DELAY)
         try:
@@ -137,23 +157,23 @@ def fetch_primary_doc(cik_no_zero: str, accession: str, primary_doc: str) -> tup
         except Exception:
             return None
         text = _clean_filing_text(r.text)
+        if len(text) > len(loose_best[1]):
+            loose_best = (url, text)
         if _ITEM_1_START_RX.search(text) and _ITEM_1A_START_RX.search(text):
             return url, text
         return None
 
-    # First attempt: the primary document the submissions feed named.
     primary_result = _try(primary_doc)
     if primary_result:
         return primary_result
 
-    # Fallback: walk the filing index, try other HTM files by size descending.
     time.sleep(SEC_REQUEST_DELAY)
     try:
         r = SEC_CLIENT.get(f"{base}/index.json")
         r.raise_for_status()
         items = r.json()["directory"]["item"]
     except Exception:
-        return f"{base}/{primary_doc}", ""
+        return loose_best if loose_best[1] else (f"{base}/{primary_doc}", "")
 
     candidates = [
         it for it in items
@@ -172,8 +192,65 @@ def fetch_primary_doc(cik_no_zero: str, accession: str, primary_doc: str) -> tup
         if found:
             return found
 
-    # Nothing worked — return the primary doc URL with whatever text we got.
-    return f"{base}/{primary_doc}", ""
+    # Nothing matched both Item-markers. Return the largest doc we cleaned —
+    # the LLM fallback can still extract sections from it.
+    return loose_best if loose_best[1] else (f"{base}/{primary_doc}", "")
+
+
+def fetch_full_filing_text(cik_no_zero: str, accession: str, primary_doc: str) -> str:
+    """LLM-fallback companion to fetch_primary_doc: concatenate the primary
+    document text with the largest other narrative .htm in the filing.
+
+    Wraparound filings (WFC's primary is a thin cover; the body lives in
+    EX-13) are the motivating case — fetch_primary_doc's strict marker
+    check accepts the cover, but the cover only has TOC-level Item 1A
+    references, so the LLM extractor needs the EX-13 attachment too. For
+    non-wraparound filings the extra attachment is harmless context.
+    """
+    acc_no_dash = accession.replace("-", "")
+    base = f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{acc_no_dash}"
+
+    def _fetch(filename: str) -> str:
+        time.sleep(SEC_REQUEST_DELAY)
+        try:
+            r = SEC_CLIENT.get(f"{base}/{filename}")
+            r.raise_for_status()
+            return _clean_filing_text(r.text)
+        except Exception:
+            return ""
+
+    primary_text = _fetch(primary_doc)
+
+    try:
+        time.sleep(SEC_REQUEST_DELAY)
+        r = SEC_CLIENT.get(f"{base}/index.json")
+        r.raise_for_status()
+        items = r.json()["directory"]["item"]
+    except Exception:
+        return primary_text
+
+    candidates = [
+        it for it in items
+        if it["name"].endswith(".htm")
+        and it["name"] != primary_doc
+        and not it["name"].startswith("R")
+        and "FilingSummary" not in it["name"]
+    ]
+    try:
+        candidates.sort(key=lambda it: int(it.get("size", 0)), reverse=True)
+    except Exception:
+        pass
+
+    extra_text = _fetch(candidates[0]["name"]) if candidates else ""
+    if not extra_text:
+        return primary_text
+    # Put the LARGER doc first so that downstream truncation
+    # (LLM_EXTRACT_INPUT_MAX_CHARS) keeps the doc most likely to contain the
+    # narrative body. WFC's EX-13 is 11x its primary cover; reversing the
+    # order puts Item 1A's body within the 300k char window.
+    if len(extra_text) > len(primary_text):
+        return extra_text + "\n\n" + primary_text
+    return primary_text + "\n\n" + extra_text
 
 
 # 10-K headings are unreliably spaced after HTML-to-text flattening (e.g.
@@ -415,12 +492,15 @@ def main() -> int:
             item_1 = extract_item_1(text)
             if not item_1 or len(item_1) < 500:
                 # Regex path failed — common for column-table TOCs, 20-Fs, or
-                # non-standard headings. Fall back to LLM-based extraction.
+                # non-standard headings. Fall back to LLM-based extraction with
+                # broader input (primary doc + largest attachment) so wraparound
+                # filings like WFC also have their body content available.
                 print(
                     f"[profile] {ticker}: regex Item 1 too short ({len(item_1)} chars) — trying LLM fallback",
                     file=sys.stderr,
                 )
-                item_1, usage = extract_section_via_llm(client, text, "Item 1 (Business)")
+                full_text = fetch_full_filing_text(cik_no_zero, filing["accessionNumber"], filing["primaryDocument"])
+                item_1, usage = extract_section_via_llm(client, full_text, "Item 1 (Business)")
                 haiku_in += usage.get("input_tokens", 0)
                 haiku_out += usage.get("output_tokens", 0)
                 if not item_1 or len(item_1) < 500:

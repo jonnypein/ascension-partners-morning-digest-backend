@@ -36,6 +36,7 @@ from company_profile_builder import (
     SONNET_MODEL,
     SONNET_OUTPUT_PRICE_PER_MTOK,
     extract_section_via_llm,
+    fetch_full_filing_text,
     fetch_primary_doc,
     flat_watchlist,
     get_latest_annual_filing,
@@ -282,12 +283,15 @@ def main() -> int:
             _, text = fetch_primary_doc(cik_no_zero, filing["accessionNumber"], filing["primaryDocument"])
             item_1a = extract_item_1a(text)
             if not item_1a or len(item_1a) < 500:
-                # Regex path failed — fall back to LLM-based extraction.
+                # Regex path failed — fall back to LLM-based extraction with
+                # broader input (primary + largest attachment) so wraparound
+                # filings like WFC also have their EX-13 body available.
                 print(
                     f"[risk] {ticker}: regex Item 1A too short ({len(item_1a)} chars) — trying LLM fallback",
                     file=sys.stderr,
                 )
-                item_1a, usage = extract_section_via_llm(client, text, "Item 1A (Risk Factors)")
+                full_text = fetch_full_filing_text(cik_no_zero, filing["accessionNumber"], filing["primaryDocument"])
+                item_1a, usage = extract_section_via_llm(client, full_text, "Item 1A (Risk Factors)")
                 haiku_in += usage.get("input_tokens", 0)
                 haiku_out += usage.get("output_tokens", 0)
                 if not item_1a or len(item_1a) < 500:
