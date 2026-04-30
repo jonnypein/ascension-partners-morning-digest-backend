@@ -93,8 +93,14 @@ def recent_earnings_filings(cik: str, cutoff_utc: datetime) -> list[dict]:
 
 
 def fetch_ex_991(cik_no_zero: str, accession: str) -> tuple[str, str] | None:
-    """Locate EX-99.1 in the filing index and return (filename, extracted_text).
-    Returns None if no 99.1 exhibit is found."""
+    """Locate the press-release exhibit in the filing index and return
+    (filename, extracted_text). Returns None if no 99-series exhibit found.
+
+    Most filers (AXP, BX, JPM, CBRE, etc.) use type="EX-99.1". A few — GE
+    and RTX confirmed — file with type="EX-99" (no decimal). Some also use
+    EX-99.<n> for n>1 when the release is split. We accept all and prefer
+    the most specific match: EX-99.1 > EX-99 > any other EX-99.<n>.
+    """
     acc_no_dash = accession.replace("-", "")
     base = f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{acc_no_dash}"
 
@@ -103,19 +109,26 @@ def fetch_ex_991(cik_no_zero: str, accession: str) -> tuple[str, str] | None:
     r.raise_for_status()
 
     # The index has rows like: [seq, description, filename, type, size].
-    # Type column values include "EX-99.1", "EX-99.2", etc.
-    filename = None
+    candidates: list[tuple[int, str]] = []  # (priority, filename); lower priority wins
     for m in re.finditer(r"<tr[^>]*>(.*?)</tr>", r.text, re.S | re.I):
         cells = [
             re.sub(r"<[^>]+>", "", c).strip()
             for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", m.group(1), re.S | re.I)
         ]
-        if len(cells) >= 4 and cells[3].upper() == "EX-99.1":
-            filename = cells[2]
-            break
+        if len(cells) < 4:
+            continue
+        ts = cells[3].upper()
+        if ts == "EX-99.1":
+            candidates.append((0, cells[2]))
+        elif ts == "EX-99":
+            candidates.append((1, cells[2]))
+        elif re.match(r"^EX-99\.\d+$", ts):
+            candidates.append((2, cells[2]))
 
-    if not filename:
+    if not candidates:
         return None
+    candidates.sort()
+    filename = candidates[0][1]
 
     time.sleep(SEC_REQUEST_DELAY)
     r = SEC_CLIENT.get(f"{base}/{filename}")

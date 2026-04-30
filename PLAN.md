@@ -36,13 +36,21 @@ following while the active session was idle. Reconcile when picking up:
   `risk_profile_builder.py` together. ~$5–7/yr. Combined fix for both
   10-K-derived datasets.
 - **Diagnosis correction**: the original "earnings card capture gaps"
-  hypothesis (lookback window too short) was wrong for AXP/CBRE — they
-  filed Apr 23 11:00 UTC, well within the 36h window when the Apr 24
-  cron ran at 06:25 UTC. Real root cause was the writer's missing
-  retry. Hypothesis still open for GE/RTX (Apr 21) — they don't
-  appear in a 240h backend run, suggesting backend can't even bundle
-  them. Next investigation: check whether their 8-K includes Item
-  2.02 and whether EX-99.1 naming matches the script's filter.
+  hypothesis (lookback window too short) was wrong for all four
+  tickers. AXP/CBRE filed within the 36h window — their issue was the
+  writer's missing retry. **GE/RTX** filed within window too — their
+  issue was that `earnings_backend.py:fetch_ex_991` only matched
+  exhibit type `EX-99.1` exactly, but GE and RTX both file their
+  press release as bare `EX-99` with no decimal. The 8-Ks were
+  detected (Item 2.02 present) but no exhibit was found, so the
+  bundle assembly silently returned None.
+- **`earnings_backend.py` widened**: now matches EX-99.1, EX-99, or
+  EX-99.<n>, preferring the most specific. GE and RTX **Q1 2026 cards
+  published retroactively** after the fix.
+- **Full week recap** in `earnings_cards` (after backfills): UNH, GE,
+  RTX, CB (Apr 21); BA (Apr 22); BX, AXP, CBRE (Apr 23); V (Apr 28);
+  GOOGL, MSFT, META, AMZN (Apr 29). 13/13 — zero gaps. AAPL pending
+  on tomorrow's cron.
 
 ## Currently in progress
 
