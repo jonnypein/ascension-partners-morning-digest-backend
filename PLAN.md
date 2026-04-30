@@ -51,6 +51,20 @@ following while the active session was idle. Reconcile when picking up:
   RTX, CB (Apr 21); BA (Apr 22); BX, AXP, CBRE (Apr 23); V (Apr 28);
   GOOGL, MSFT, META, AMZN (Apr 29). 13/13 — zero gaps. AAPL pending
   on tomorrow's cron.
+- **Profile / risk builders: LLM fallback added** when the regex-based
+  section extractor returns empty. Uses Haiku (~$0.25/ticker, only on
+  failures) to locate Item 1 / Item 1A in unconventional layouts. Plus
+  SEC_TIMEOUT bumped from 30s to 180s — was silently timing out on
+  large 10-K HTMLs (MS/SHEL ~10MB each).
+  - **Newly working**: GE company + risk, BRK-B risk, WFC company.
+  - **Still failing** (deeper issues): MS company + risk, SHEL
+    company + risk, WFC risk. MS and SHEL file pure iXBRL where
+    BS4's flatten gets dominated by us-gaap/fasb.org metadata
+    URIs and the actual narrative headings disappear. WFC's risk
+    section lives in the EX-13 (wraparound style) and uses
+    "Risk Factors" without the "Item 1A" prefix that the regex
+    expects. Each needs its own custom handler — defer until the
+    Coverage pages become a priority for those specific tickers.
 
 ## Currently in progress
 

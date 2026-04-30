@@ -35,13 +35,19 @@ from digest_backend import WATCHLIST
 
 UA = "Ascension Partners Morning Digest jonathan.o.k.pein@gmail.com"
 SEC_REQUEST_DELAY = 0.12
-SEC_TIMEOUT = 30
+# 180s, not 30s: MS and SHEL 10-Ks are ~10MB each and the SEC's edgar host
+# can take >30s to deliver them. The previous 30s ceiling silently failed.
+SEC_TIMEOUT = 180
 SEC_CLIENT = httpx.Client(headers={"User-Agent": UA}, timeout=SEC_TIMEOUT)
 
 SONNET_MODEL = "claude-sonnet-4-6"
 SONNET_INPUT_PRICE_PER_MTOK = 3.0
 SONNET_OUTPUT_PRICE_PER_MTOK = 15.0
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+HAIKU_INPUT_PRICE_PER_MTOK = 0.80
+HAIKU_OUTPUT_PRICE_PER_MTOK = 4.00
 MAX_ITEM_1_CHARS = 120_000   # ~30k tokens; Item 1 sections are rarely larger
+LLM_EXTRACT_INPUT_MAX_CHARS = 300_000  # ~75k tokens; covers any realistic Item 1 / 1A position
 
 
 PROFILE_SYSTEM = """You are an equity research analyst. You are given Item 1 "Business" from a company's 10-K filing. Extract a structured company profile for a buy-side daily digest system.
@@ -221,6 +227,52 @@ def extract_item_1(text: str) -> str:
     return chunk
 
 
+_EXTRACT_SECTION_SYSTEM = """You are extracting a specific section from an SEC annual filing. Return ONLY the verbatim section text, with no preamble, commentary, or markdown.
+
+Forms and section equivalents:
+- 10-K Item 1 "Business" or 20-F Item 4 "Information on the Company" — the company's business description.
+- 10-K Item 1A "Risk Factors" or 20-F Item 3.D "Risk Factors" — the company's risk factors.
+- Some filers use unconventional headings (column-table TOCs, all-caps, abbreviated). Match by content if a labeled heading isn't present.
+
+Begin output at the section heading; end immediately before the next item heading. If the requested section truly cannot be found, return the literal string `__NOT_FOUND__` and nothing else."""
+
+
+def extract_section_via_llm(
+    client: anthropic.Anthropic,
+    full_text: str,
+    target: str,
+) -> tuple[str, dict]:
+    """Fallback section extraction: ask Haiku to locate and return the
+    verbatim section text. Used when the regex extractors return empty —
+    typically for column-table TOCs (MS), 20-F filings (SHEL),
+    non-standard headings (GE), or otherwise unconventional layouts.
+
+    Returns (extracted_text, usage_dict). extracted_text is empty if the
+    section couldn't be located. The fallback is deliberately bounded by
+    LLM_EXTRACT_INPUT_MAX_CHARS so cost is predictable.
+    """
+    truncated = full_text[:LLM_EXTRACT_INPUT_MAX_CHARS]
+    user_msg = f"Target section: {target}\n\n--- Filing text begins ---\n\n{truncated}"
+    try:
+        resp = client.messages.create(
+            model=HAIKU_MODEL,
+            max_tokens=20_000,
+            system=_EXTRACT_SECTION_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+    except Exception as exc:
+        return "", {"input_tokens": 0, "output_tokens": 0, "error": str(exc)}
+
+    text = resp.content[0].text if resp.content else ""
+    usage = {
+        "input_tokens": resp.usage.input_tokens,
+        "output_tokens": resp.usage.output_tokens,
+    }
+    if "__NOT_FOUND__" in text or len(text.strip()) < 500:
+        return "", usage
+    return text.strip(), usage
+
+
 def _strip_fences(text: str) -> str:
     s = text.strip()
     if s.startswith("```"):
@@ -342,6 +394,8 @@ def main() -> int:
 
     total_in = 0
     total_out = 0
+    haiku_in = 0
+    haiku_out = 0
     ok = 0
     fail = 0
     for name, ticker, sector in targets:
@@ -360,9 +414,23 @@ def main() -> int:
             _, text = fetch_primary_doc(cik_no_zero, filing["accessionNumber"], filing["primaryDocument"])
             item_1 = extract_item_1(text)
             if not item_1 or len(item_1) < 500:
-                print(f"[profile] {ticker}: Item 1 extraction too short ({len(item_1)} chars) — skipping", file=sys.stderr)
-                fail += 1
-                continue
+                # Regex path failed — common for column-table TOCs, 20-Fs, or
+                # non-standard headings. Fall back to LLM-based extraction.
+                print(
+                    f"[profile] {ticker}: regex Item 1 too short ({len(item_1)} chars) — trying LLM fallback",
+                    file=sys.stderr,
+                )
+                item_1, usage = extract_section_via_llm(client, text, "Item 1 (Business)")
+                haiku_in += usage.get("input_tokens", 0)
+                haiku_out += usage.get("output_tokens", 0)
+                if not item_1 or len(item_1) < 500:
+                    print(
+                        f"[profile] {ticker}: LLM fallback also failed ({len(item_1)} chars) — skipping",
+                        file=sys.stderr,
+                    )
+                    fail += 1
+                    continue
+                print(f"[profile] {ticker}: LLM fallback succeeded ({len(item_1)} chars)", file=sys.stderr)
         except Exception as exc:
             print(f"[profile] {ticker}: fetch/extract failed: {exc}", file=sys.stderr)
             fail += 1
@@ -386,9 +454,11 @@ def main() -> int:
                 print(f"[profile] {ticker}: publish failed: {exc}", file=sys.stderr)
                 fail += 1
 
-    cost = total_in / 1_000_000 * SONNET_INPUT_PRICE_PER_MTOK + total_out / 1_000_000 * SONNET_OUTPUT_PRICE_PER_MTOK
+    sonnet_cost = total_in / 1_000_000 * SONNET_INPUT_PRICE_PER_MTOK + total_out / 1_000_000 * SONNET_OUTPUT_PRICE_PER_MTOK
+    haiku_cost = haiku_in / 1_000_000 * HAIKU_INPUT_PRICE_PER_MTOK + haiku_out / 1_000_000 * HAIKU_OUTPUT_PRICE_PER_MTOK
+    cost = sonnet_cost + haiku_cost
     print(
-        f"[profile] done: {ok} ok / {fail} failed  |  {total_in:,} in / {total_out:,} out tokens  |  ${cost:.4f}",
+        f"[profile] done: {ok} ok / {fail} failed  |  Sonnet {total_in:,}/{total_out:,} + Haiku-fallback {haiku_in:,}/{haiku_out:,}  |  ${cost:.4f}",
         file=sys.stderr,
     )
     return 0 if fail == 0 else 1

@@ -29,10 +29,13 @@ import anthropic
 from dotenv import load_dotenv
 
 from company_profile_builder import (
+    HAIKU_INPUT_PRICE_PER_MTOK,
+    HAIKU_OUTPUT_PRICE_PER_MTOK,
     SEC_REQUEST_DELAY,
     SONNET_INPUT_PRICE_PER_MTOK,
     SONNET_MODEL,
     SONNET_OUTPUT_PRICE_PER_MTOK,
+    extract_section_via_llm,
     fetch_primary_doc,
     flat_watchlist,
     get_latest_annual_filing,
@@ -259,6 +262,8 @@ def main() -> int:
 
     total_in = 0
     total_out = 0
+    haiku_in = 0
+    haiku_out = 0
     ok = 0
     fail = 0
     for name, ticker, sector in targets:
@@ -277,9 +282,22 @@ def main() -> int:
             _, text = fetch_primary_doc(cik_no_zero, filing["accessionNumber"], filing["primaryDocument"])
             item_1a = extract_item_1a(text)
             if not item_1a or len(item_1a) < 500:
-                print(f"[risk] {ticker}: Item 1A extraction too short ({len(item_1a)} chars) — skipping", file=sys.stderr)
-                fail += 1
-                continue
+                # Regex path failed — fall back to LLM-based extraction.
+                print(
+                    f"[risk] {ticker}: regex Item 1A too short ({len(item_1a)} chars) — trying LLM fallback",
+                    file=sys.stderr,
+                )
+                item_1a, usage = extract_section_via_llm(client, text, "Item 1A (Risk Factors)")
+                haiku_in += usage.get("input_tokens", 0)
+                haiku_out += usage.get("output_tokens", 0)
+                if not item_1a or len(item_1a) < 500:
+                    print(
+                        f"[risk] {ticker}: LLM fallback also failed ({len(item_1a)} chars) — skipping",
+                        file=sys.stderr,
+                    )
+                    fail += 1
+                    continue
+                print(f"[risk] {ticker}: LLM fallback succeeded ({len(item_1a)} chars)", file=sys.stderr)
         except Exception as exc:
             print(f"[risk] {ticker}: fetch/extract failed: {exc}", file=sys.stderr)
             fail += 1
@@ -303,9 +321,11 @@ def main() -> int:
                 print(f"[risk] {ticker}: publish failed: {exc}", file=sys.stderr)
                 fail += 1
 
-    cost = total_in / 1_000_000 * SONNET_INPUT_PRICE_PER_MTOK + total_out / 1_000_000 * SONNET_OUTPUT_PRICE_PER_MTOK
+    sonnet_cost = total_in / 1_000_000 * SONNET_INPUT_PRICE_PER_MTOK + total_out / 1_000_000 * SONNET_OUTPUT_PRICE_PER_MTOK
+    haiku_cost = haiku_in / 1_000_000 * HAIKU_INPUT_PRICE_PER_MTOK + haiku_out / 1_000_000 * HAIKU_OUTPUT_PRICE_PER_MTOK
+    cost = sonnet_cost + haiku_cost
     print(
-        f"[risk] done: {ok} ok / {fail} failed  |  {total_in:,} in / {total_out:,} out tokens  |  ${cost:.4f}",
+        f"[risk] done: {ok} ok / {fail} failed  |  Sonnet {total_in:,}/{total_out:,} + Haiku-fallback {haiku_in:,}/{haiku_out:,}  |  ${cost:.4f}",
         file=sys.stderr,
     )
     return 0 if fail == 0 else 1
