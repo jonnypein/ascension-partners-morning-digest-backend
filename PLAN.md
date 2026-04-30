@@ -69,6 +69,52 @@ following while the active session was idle. Reconcile when picking up:
     the session: ~$3 in Anthropic credits for diagnostic + publish
     rounds.
 
+- **`fundamentals` block added to consensus_snapshots.** New jsonb
+  column populated by `consensus_builder.py`:
+  - `fiscal_year_end` (date)
+  - `growth`: revenue_yoy_pct, eps_yoy_pct, revenue_5y_cagr_pct,
+    eps_5y_cagr_pct (5y fields null for nearly all — yfinance only
+    returns 4 annual datapoints)
+  - `valuation`: forward_pe_fy0, forward_pe_fy1 (both from
+    earnings_estimate so they share a fiscal-year basis),
+    price_to_fcf_ttm, ev_to_ebitda_ttm
+  - `non_gaap_eps_ttm`: sum of last 4 earnings_cards.card.results.
+    eps_actual; null until cards accumulate (~3 quarters out for
+    most tickers)
+  - `eps_beat_history`: last 4 quarters from yfinance.earnings_history,
+    surprise normalised from fraction to percent
+  - Schema migration applied (`alter table consensus_snapshots add
+    column if not exists fundamentals jsonb`). Backfilled all 33
+    tickers at no cost (yfinance only).
+  - Forward FCF / forward EBITDA intentionally out of scope per v1
+    spec — would require a paid data source. Only forward P/E
+    extends past TTM.
+
+- **Validation tool**: `validate_fundamentals.py` cross-checks every
+  fundamental field against SEC EDGAR's XBRL `companyfacts` API
+  (the most authoritative free source).
+  - fiscal_year_end: 10/10 perfect match
+  - quarterly revenue/EPS: 4/10 within 5% of EDGAR. Remaining DIFFs
+    are explainable, NOT data quality issues — Q4 derived from
+    10-K minus Q1+Q2+Q3, yfinance one quarter stale, banks not
+    normalised. Module docstring lays out the categories.
+  - Forward-looking fields (forward_pe_*, P/FCF, EV/EBITDA) and
+    non_gaap_eps_ttm are not directly validatable against free
+    public sources.
+  - Recommended re-run cadence: quarterly after each consensus
+    backfill, manually after any schema or builder changes.
+
+- **Lovable UI updates needed** (paste-pending — user task):
+  - On `/companies/:ticker`, render the new `fundamentals` block
+    grouped as Header (fiscal_year_end), Growth Rates, Valuation
+    Multiples, Recent EPS Beats. Hide null-value rows; for
+    financials with all-null FCF/EBITDA show single line
+    "Cash-flow and EBITDA multiples not applicable for financials".
+  - Label the EPS Beats table heading "Recent EPS Beats (GAAP)"
+    with subtitle clarifying the difference vs the non-GAAP
+    figures shown in the per-quarter earnings cards on the same
+    page.
+
 ## Currently in progress
 
 _Nothing. Phase 2b and Phase 2c shipped 2026-04-24; out-of-band
