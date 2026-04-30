@@ -168,9 +168,18 @@ create table if not exists public.consensus_snapshots (
   eps_estimates     jsonb,
   price_targets     jsonb,
   recommendations   jsonb,
+  -- Added 2026-04-30: trailing growth rates + valuation multiples (forward P/E
+  -- FY0/FY1, Price/FCF TTM, EV/EBITDA TTM) + last 8 quarters of EPS beats +
+  -- fiscal_year_end. Forward FCF / forward EBITDA require a paid data source
+  -- and are intentionally out of scope; only forward P/E goes forward today.
+  fundamentals     jsonb,
   created_at        timestamptz not null default now(),
   unique (ticker, asof_date)
 );
+
+-- One-shot migration for tables that already exist:
+alter table public.consensus_snapshots
+  add column if not exists fundamentals jsonb;
 
 create index if not exists consensus_ticker_asof_idx
   on public.consensus_snapshots (ticker, asof_date desc);
