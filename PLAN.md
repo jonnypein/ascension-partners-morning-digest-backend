@@ -51,20 +51,23 @@ following while the active session was idle. Reconcile when picking up:
   RTX, CB (Apr 21); BA (Apr 22); BX, AXP, CBRE (Apr 23); V (Apr 28);
   GOOGL, MSFT, META, AMZN (Apr 29). 13/13 — zero gaps. AAPL pending
   on tomorrow's cron.
-- **Profile / risk builders: LLM fallback added** when the regex-based
-  section extractor returns empty. Uses Haiku (~$0.25/ticker, only on
-  failures) to locate Item 1 / Item 1A in unconventional layouts. Plus
-  SEC_TIMEOUT bumped from 30s to 180s — was silently timing out on
-  large 10-K HTMLs (MS/SHEL ~10MB each).
-  - **Newly working**: GE company + risk, BRK-B risk, WFC company.
-  - **Still failing** (deeper issues): MS company + risk, SHEL
-    company + risk, WFC risk. MS and SHEL file pure iXBRL where
-    BS4's flatten gets dominated by us-gaap/fasb.org metadata
-    URIs and the actual narrative headings disappear. WFC's risk
-    section lives in the EX-13 (wraparound style) and uses
-    "Risk Factors" without the "Item 1A" prefix that the regex
-    expects. Each needs its own custom handler — defer until the
-    Coverage pages become a priority for those specific tickers.
+- **Profile / risk builders: 33/33 watchlist coverage now** (was
+  28/33). Three-stage fix landed across two commits:
+  1. SEC_TIMEOUT 30s -> 180s. Previously silently timed out on
+     large 10-K HTMLs (MS/SHEL ~10MB each).
+  2. LLM fallback (Haiku, ~$0.25/ticker, only on failures) when the
+     regex-based section extractor returns empty. Handles
+     unconventional headings.
+  3. iXBRL header strip in `_clean_filing_text` — MS/SHEL embed
+     thousands of us-gaap/fasb.org URIs in a hidden `<ix:header>`
+     div that drowned narrative when BS4 flattened. Plus
+     `fetch_full_filing_text` concatenates primary + largest
+     attachment (largest first) so wraparound filings (WFC's body
+     in EX-13) get full coverage.
+  - All 5 originally broken (MS, SHEL, GE, BRK-B, WFC) × both
+    builders are now publishing cleanly. Total recovery cost across
+    the session: ~$3 in Anthropic credits for diagnostic + publish
+    rounds.
 
 ## Currently in progress
 
