@@ -5,12 +5,49 @@ session. Update it whenever you update `TodoWrite` with meaningful status
 changes — otherwise the in-session todos vanish and future sessions lose
 context.
 
-Last updated: 2026-04-24 (Friday, late-afternoon)
+Last updated: 2026-04-30 (Thursday, late-morning) — out-of-band session
+
+## Out-of-band session 2026-04-30
+
+A separate Claude session (working directly in this worktree) did the
+following while the active session was idle. Reconcile when picking up:
+
+- **BLK duplicate row deleted** from `earnings_cards` (kept the clean
+  `Q1 2026`, removed the verbose `Q1 2026 (three months ended...)` row).
+- **AXP and CBRE Q1 2026 cards published retroactively.** Re-running
+  the 240h-lookback bundles through `earnings_writer.py` produced
+  parseable cards for both. The original Apr 24 cron run dropped them
+  silently because the writer had no retry on transient JSON-parse
+  failures.
+- **`earnings_writer.py` hardened** with the same retry+dump pattern
+  used in `digest_writer.py`. Two attempts; second adds stricter "JSON
+  only" framing; both raw outputs dumped to
+  `output/failed_parses_<date>.jsonl` if both fail. Adds
+  `meta.bundles_in / meta.cards_out` so the artifact reveals drops
+  without needing to grep workflow logs.
+- **`run_daily.py`** now writes the writer's full payload (cards +
+  meta) into `output/earnings_cards_<date>.json` and emits a WARN log
+  when `cards_out < bundles_in`. Previously the artifact was just
+  `{cards: [...]}`.
+- **3 free builders re-run** for fresh data (catalysts, consensus
+  snapshots, macro sensitivities). Tables now stamped 2026-04-30.
+- **Yearly profile workflow added** (`.github/workflows/yearly_profiles.yml`)
+  — fires April 1 each year, runs `company_profile_builder.py` and
+  `risk_profile_builder.py` together. ~$5–7/yr. Combined fix for both
+  10-K-derived datasets.
+- **Diagnosis correction**: the original "earnings card capture gaps"
+  hypothesis (lookback window too short) was wrong for AXP/CBRE — they
+  filed Apr 23 11:00 UTC, well within the 36h window when the Apr 24
+  cron ran at 06:25 UTC. Real root cause was the writer's missing
+  retry. Hypothesis still open for GE/RTX (Apr 21) — they don't
+  appear in a 240h backend run, suggesting backend can't even bundle
+  them. Next investigation: check whether their 8-K includes Item
+  2.02 and whether EX-99.1 naming matches the script's filter.
 
 ## Currently in progress
 
-_Nothing. Phase 2b and Phase 2c both shipped today (user pulled 2c
-forward from Mon/Tue). Weekend is idle._
+_Nothing. Phase 2b and Phase 2c shipped 2026-04-24; out-of-band
+maintenance completed 2026-04-30 (see above)._
 
 ## Next session (Monday 2026-04-27)
 

@@ -235,38 +235,81 @@ def validate_card(card: dict, bundle: dict, warnings: list) -> dict:
 
 
 def generate_card(client: anthropic.Anthropic, bundle: dict, warnings: list) -> tuple[dict | None, dict]:
-    """Return (card_dict_or_None, usage_dict)."""
+    """Return (card_dict_or_None, usage_dict).
+
+    Two attempts. The second adds a stricter "JSON only" framing in case the
+    first response wrapped the payload in prose or a code fence. If both
+    attempts produce unparseable output, dump both raw responses to
+    output/failed_parses_<date>.jsonl for offline diagnosis. Mirrors the
+    pattern in digest_writer.py:step_b_company_section — added after the
+    Apr 24 incident where AXP and CBRE were silently dropped on transient
+    parse failures.
+    """
     user_msg = render_input_block(bundle)
+    raw_texts: list[str] = []
+    total_in = 0
+    total_out = 0
+
+    for attempt in range(2):
+        retry_user_msg = user_msg
+        if attempt == 1:
+            retry_user_msg += (
+                "\n\nReturn ONLY the JSON object specified in the system prompt "
+                "(starting with `{` and ending with `}`). No preamble, no markdown "
+                "code fence, no prose outside the JSON."
+            )
+        try:
+            resp = client.messages.create(
+                model=SONNET_MODEL,
+                max_tokens=2500,
+                system=[{
+                    "type": "text",
+                    "text": EARNINGS_CARD_SYSTEM,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                messages=[{"role": "user", "content": retry_user_msg}],
+            )
+        except Exception as exc:
+            warnings.append(f"{bundle['ticker']}: Claude call failed (attempt {attempt + 1}): {exc}")
+            return None, {"input_tokens": total_in, "output_tokens": total_out}
+
+        total_in += resp.usage.input_tokens
+        total_out += resp.usage.output_tokens
+
+        text = resp.content[0].text if resp.content else ""
+        raw_texts.append(text)
+        parsed = _parse_json(text)
+
+        if isinstance(parsed, dict):
+            card = validate_card(parsed, bundle, warnings)
+            card["_source"] = {
+                "press_release_url": bundle["press_release"]["source_url"],
+                "accession_number": bundle["press_release"]["accession_number"],
+                "filed_at": bundle["filed_at"],
+            }
+            return card, {"input_tokens": total_in, "output_tokens": total_out}
+
+    # Both attempts failed — surface the warning and dump raw outputs so
+    # the next session can tighten the prompt or the parser.
+    warnings.append(f"{bundle['ticker']}: unparseable model output after 2 attempts")
     try:
-        resp = client.messages.create(
-            model=SONNET_MODEL,
-            max_tokens=2500,
-            system=[{
-                "type": "text",
-                "text": EARNINGS_CARD_SYSTEM,
-                "cache_control": {"type": "ephemeral"},
-            }],
-            messages=[{"role": "user", "content": user_msg}],
-        )
-    except Exception as exc:
-        warnings.append(f"{bundle['ticker']}: Claude call failed: {exc}")
-        return None, {}
-
-    usage = resp.usage
-    text = resp.content[0].text if resp.content else ""
-    parsed = _parse_json(text)
-    if not isinstance(parsed, dict):
-        warnings.append(f"{bundle['ticker']}: unparseable model output")
-        return None, {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
-
-    card = validate_card(parsed, bundle, warnings)
-    # Stamp provenance for downstream storage / debugging.
-    card["_source"] = {
-        "press_release_url": bundle["press_release"]["source_url"],
-        "accession_number": bundle["press_release"]["accession_number"],
-        "filed_at": bundle["filed_at"],
-    }
-    return card, {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        out_dir = os.path.join(script_dir, "output")
+        os.makedirs(out_dir, exist_ok=True)
+        today = datetime.now(timezone.utc).date().isoformat()
+        dump_path = os.path.join(out_dir, f"failed_parses_{today}.jsonl")
+        with open(dump_path, "a") as f:
+            f.write(json.dumps({
+                "source": "earnings_writer",
+                "ticker": bundle["ticker"],
+                "fiscal_period": bundle.get("fiscal_period"),
+                "filed_at": bundle.get("filed_at"),
+                "attempts": raw_texts,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }) + "\n")
+    except Exception:
+        pass  # best-effort; don't let a disk write break the pipeline
+    return None, {"input_tokens": total_in, "output_tokens": total_out}
 
 
 def load_input(path: str | None) -> dict:
@@ -317,6 +360,8 @@ def main() -> int:
         "earnings_cards": cards,
         "meta": {
             "api_calls": api_calls,
+            "bundles_in": len(bundles),
+            "cards_out": len(cards),
             "estimated_cost_usd": round(cost, 4),
             "warnings": warnings,
         },
