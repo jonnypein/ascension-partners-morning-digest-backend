@@ -5,6 +5,40 @@ session. Update it whenever you update `TodoWrite` with meaningful status
 changes — otherwise the in-session todos vanish and future sessions lose
 context.
 
+Last updated: 2026-05-06 (Wednesday) — watchlist add + Friday weekly wrap
+
+## Session 2026-05-06
+
+- **Watchlist additions**: CAT (Caterpillar) and DE (Deere) added to
+  `industrials_energy_transport`; RKT (Rocket Companies) added to
+  `real_estate`. CBRE and Z (Zillow) were already on the list. All three
+  new tickers validated against yfinance + SEC CIK map. They flow
+  automatically through digest, earnings, profile/risk, catalyst,
+  consensus, and sensitivity builders on next run.
+- **AUD/USD added to FX** (`AUDUSD=X`) — alongside DXY, EUR/USD,
+  GBP/USD, JPY, CHF, ZAR.
+- **Friday close-of-play weekly wrap shipped** as a parallel pipeline:
+  - `digest_backend.py` — `CONTEXT_WINDOW_HOURS` now reads
+    `DIGEST_CONTEXT_WINDOW_HOURS` env (default 24). The weekly
+    orchestrator sets it to 120 (5 trading days).
+  - `weekly_writer.py` — Sonnet writes a 5-paragraph weekly recap
+    (equities, FI, commodities/FX, macro this week, look-ahead).
+    Reuses helpers from `digest_writer` (CostTracker, formatters,
+    JSON parsing). No per-company sections — those stay daily.
+  - `run_weekly.py` — orchestrator. `--now` runs unconditionally;
+    `--scheduled` skips if today (London) is not Friday.
+  - `weekly_wraps` table added to `schema.sql` (PK `week_ending`,
+    public-read RLS) — **needs manual SQL migration** in Supabase
+    SQL Editor before first cron fires.
+  - `publish_weekly_wrap` added to `publish.py`.
+  - GitHub Actions: `.github/workflows/weekly-wrap.yml` cron
+    `0 22 * * 5` (Fri 22:00 UTC = 17:00 ET standard / 18:00 ET DST,
+    always at least 1h post-NYSE-close; GH queue lands ~22:30-23:30
+    UTC).
+  - Smoke-tested locally 2026-05-06: backend with 120h lookback
+    classified 1104 items, $0.16; writer produced clean 5-paragraph
+    output, $0.13. ~$0.30/run, ~$15/year.
+
 Last updated: 2026-04-30 (Thursday, late-morning) — out-of-band session
 
 ## Out-of-band session 2026-04-30
@@ -117,8 +151,12 @@ following while the active session was idle. Reconcile when picking up:
 
 ## Currently in progress
 
-_Nothing. Phase 2b and Phase 2c shipped 2026-04-24; out-of-band
-maintenance completed 2026-04-30 (see above)._
+- **Manual Supabase SQL migration outstanding**: the `weekly_wraps`
+  table needs to be created in the Supabase SQL Editor before the
+  first Friday cron fires (the `create table if not exists` block at
+  the bottom of `schema.sql`). Until then `run_weekly.py` will save
+  locally but the publish step will 404. Lovable also needs a renderer
+  for the weekly-wrap row when the user is ready.
 
 ## Next session (Monday 2026-04-27)
 

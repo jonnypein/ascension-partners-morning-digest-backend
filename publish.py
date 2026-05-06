@@ -18,6 +18,7 @@ import httpx
 from dotenv import load_dotenv
 
 DIGESTS_TABLE = "digests"
+WEEKLY_WRAPS_TABLE = "weekly_wraps"
 GUIDANCE_TABLE = "company_guidance"
 EARNINGS_CARDS_TABLE = "earnings_cards"
 COMPANY_PROFILES_TABLE = "company_profiles"
@@ -44,6 +45,30 @@ def publish_digest(digest: dict) -> None:
     r = httpx.post(
         f"{url}/rest/v1/{DIGESTS_TABLE}",
         params={"on_conflict": "date"},
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+        json=row,
+        timeout=30,
+    )
+    r.raise_for_status()
+
+
+def publish_weekly_wrap(wrap: dict) -> None:
+    """Upsert a Friday close-of-play wrap. Keyed on `week_ending` (Friday date)."""
+    url, key = _supabase_env()
+    row = {
+        "week_ending":  wrap["week_ending"],
+        "generated_at": wrap["generated_at"],
+        "wrap":         wrap["wrap"],
+        "meta":         wrap["meta"],
+    }
+    r = httpx.post(
+        f"{url}/rest/v1/{WEEKLY_WRAPS_TABLE}",
+        params={"on_conflict": "week_ending"},
         headers={
             "apikey": key,
             "Authorization": f"Bearer {key}",

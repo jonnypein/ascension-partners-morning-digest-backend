@@ -190,3 +190,21 @@ create policy "public read"
   on public.consensus_snapshots
   for select
   using (true);
+
+-- Phase 2c weekly wraps: Friday close-of-play recap covering Mon-Fri.
+-- Mirrors the `digests` shape but `week_ending` (Friday's date) is the PK
+-- and `wrap` jsonb holds the recap-shaped editorial output.
+create table if not exists public.weekly_wraps (
+  week_ending  date primary key,
+  generated_at timestamptz not null,
+  wrap         jsonb       not null,
+  meta         jsonb       not null,
+  created_at   timestamptz not null default now()
+);
+
+alter table public.weekly_wraps enable row level security;
+
+create policy "public read"
+  on public.weekly_wraps
+  for select
+  using (true);

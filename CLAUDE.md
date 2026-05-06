@@ -19,24 +19,37 @@ the user maintains separately.
 
 ## Pipelines
 
-Five Python modules, each runnable standalone or chained. They all share
-the SEC-fetching infrastructure in `company_profile_builder.py` and the
-`.env`-gated Supabase writes in `publish.py`.
+Six Python orchestrators, each runnable standalone or chained. They all
+share the SEC-fetching infrastructure in `company_profile_builder.py`
+and the `.env`-gated Supabase writes in `publish.py`.
 
-- **`run_daily.py`** — the orchestrator. `--now` runs the full pipeline
-  once (bypasses weekend/holiday checks); `--scheduled` runs once with
-  holiday check (used by GitHub Actions cron); no flag starts an
-  in-process `schedule` loop that fires at 05:30 Europe/London.
-- **`digest_backend.py`** — daily news ingestion. Pulls ~45 RSS feeds
-  (CNBC, MarketWatch, Reuters via Google News, Bloomberg via Google News,
-  Seeking Alpha, Federal Reserve, ECB, BoE, BoJ, Nikkei Asia, per-ticker
-  Yahoo Finance) + yfinance prices + FRED macro series. Haiku
-  classifier assigns asset-class tags and relevance 1-5. Outputs
-  `{market_data, context}` JSON.
-- **`digest_writer.py`** — Sonnet writers. Step A (Haiku) identifies
-  watchlist company events; Step B (Sonnet) writes 3-paragraph company
-  sections; Step C (Sonnet) writes the Market Wrap. Emits the full
-  digest JSON read by Supabase.
+- **`run_daily.py`** — the morning-digest orchestrator. `--now` runs the
+  full pipeline once (bypasses weekend/holiday checks); `--scheduled`
+  runs once with holiday check (used by GitHub Actions cron); no flag
+  starts an in-process `schedule` loop that fires at 05:30 Europe/London.
+- **`run_weekly.py`** — Friday close-of-play orchestrator. Sets
+  `DIGEST_CONTEXT_WINDOW_HOURS=120` so the news context covers the full
+  trading week, then pipes `digest_backend.py` into `weekly_writer.py`
+  and upserts the result into `weekly_wraps`. `--scheduled` skips
+  non-Fridays. Cron in `.github/workflows/weekly-wrap.yml` fires Fri
+  22:00 UTC.
+- **`digest_backend.py`** — news + market-data ingestion. Pulls ~45 RSS
+  feeds (CNBC, MarketWatch, Reuters via Google News, Bloomberg via
+  Google News, Seeking Alpha, Federal Reserve, ECB, BoE, BoJ, Nikkei
+  Asia, per-ticker Yahoo Finance) + yfinance prices + FRED macro
+  series. Haiku classifier assigns asset-class tags and relevance 1-5.
+  Outputs `{market_data, context}` JSON. News lookback is 24h by
+  default, overridable via env `DIGEST_CONTEXT_WINDOW_HOURS` (the
+  weekly orchestrator sets this to 120).
+- **`digest_writer.py`** — Sonnet writers for the daily digest. Step A
+  (Haiku) identifies watchlist company events; Step B (Sonnet) writes
+  3-paragraph company sections; Step C (Sonnet) writes the Market Wrap.
+  Emits the full digest JSON read by Supabase.
+- **`weekly_writer.py`** — Friday recap writer. One Sonnet call produces
+  a 5-paragraph weekly wrap (equities, FI, commodities/FX, macro this
+  week, look-ahead) plus the same numeric `market_snapshot` block as
+  the daily digest. No per-company sections — those stay daily. Reuses
+  helpers from `digest_writer` (CostTracker, formatters, JSON parsing).
 - **`earnings_backend.py` + `earnings_writer.py`** — earnings card
   pipeline. Detects watchlist companies that filed 8-Ks with Item 2.02
   (Results of Operations) in the last 36h, fetches EX-99.1 via EDGAR,
@@ -68,6 +81,8 @@ migration tooling).
 
 - **`digests`** — one row per market session (`date` = data_as_of).
   Lovable reads latest.
+- **`weekly_wraps`** — one row per Friday (`week_ending` = Friday's
+  date). Public read. Populated by `run_weekly.py` Fri 22:00 UTC.
 - **`earnings_cards`** — one row per `(ticker, fiscal_period)`. Keyed
   by `filed_at` for date-windowed queries. Public read.
 - **`company_guidance`** — one row per `(ticker, fiscal_period)`.
@@ -94,16 +109,25 @@ policies.
 
 ## GitHub Actions
 
-`.github/workflows/run-daily.yml` runs `run_daily.py --scheduled` on
-weekdays at 04:30 UTC. Runs in practice land at ~06:30 UTC because of
-GH's well-documented scheduled-job queue delays. That's fine — US
-markets don't open until 13:30 UTC.
+- `.github/workflows/run-daily.yml` runs `run_daily.py --scheduled` on
+  weekdays at 04:30 UTC. Runs in practice land at ~06:30 UTC because of
+  GH's well-documented scheduled-job queue delays. That's fine — US
+  markets don't open until 13:30 UTC.
+- `.github/workflows/weekly-wrap.yml` runs `run_weekly.py --scheduled`
+  Fridays at 22:00 UTC (always at least 1h after NYSE close: 17:00 ET
+  in standard time / 18:00 ET in DST). Lands ~22:30-23:30 UTC after
+  queue delay.
+- `.github/workflows/yearly_profiles.yml` rebuilds company + risk
+  profiles April 1 each year.
 
 ## Commands that come up
 
 ```bash
-# One-off full pipeline (bypasses holiday check)
+# One-off full daily pipeline (bypasses holiday check)
 .venv/bin/python run_daily.py --now
+
+# One-off Friday weekly wrap (bypasses Friday-only check)
+.venv/bin/python run_weekly.py --now
 
 # Smoke-test a single earnings card end-to-end
 .venv/bin/python earnings_backend.py --ticker JPM --lookback-hours 240 \
@@ -153,8 +177,10 @@ markets don't open until 13:30 UTC.
 ## Costs
 
 - Full `run_daily.py`: ~$0.12 per run (~$2.50/month at weekday cadence).
+- `run_weekly.py`: ~$0.30 per run (~$15/year). Higher than daily because
+  the 120h news lookback has ~5x the items to classify.
 - Earnings card: ~$0.04 per card. Peak earnings week maybe $0.30/day.
 - Annual company-profile rebuild: ~$1.40 one-off across 34 tickers.
 - Annual risk-profile rebuild: ~$1.50 one-off across 34 tickers.
 - Catalysts refresh: free (yfinance only).
-- Total annual: well under $50.
+- Total annual: well under $75.

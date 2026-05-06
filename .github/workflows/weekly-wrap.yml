@@ -1,0 +1,53 @@
+name: Weekly Wrap
+
+# Friday 22:00 UTC. NYSE closes at 20:00 UTC (DST) / 21:00 UTC (standard time),
+# so 22:00 UTC is always at least an hour post-close. GitHub's scheduled-job
+# queue delays typically add another 30–90 minutes, which lands the run between
+# ~22:30 UTC and ~23:30 UTC — late evening London / early evening NY.
+# `run_weekly.py --scheduled` is a no-op on non-Fridays as a defence in depth.
+on:
+  schedule:
+    - cron: "0 22 * * 5"
+  workflow_dispatch: {}
+
+concurrency:
+  group: weekly-wrap
+  cancel-in-progress: false
+
+jobs:
+  run-weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run weekly wrap pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python run_weekly.py --scheduled
+
+      - name: Upload weekly wrap output + logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-wrap-${{ github.run_id }}
+          path: |
+            output/weekly_wrap_*.json
+            output/weekly_backend_*.json
+            logs/run_weekly.log
+          if-no-files-found: ignore
+          retention-days: 30

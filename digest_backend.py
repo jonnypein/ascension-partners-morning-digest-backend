@@ -96,6 +96,8 @@ WATCHLIST: dict[str, list[tuple[str, str]]] = {
         ("Uber", "UBER"),
         ("General Electric", "GE"),
         ("RTX Corporation", "RTX"),
+        ("Caterpillar", "CAT"),
+        ("Deere", "DE"),
     ],
     "financials": [
         ("Blackstone", "BX"),
@@ -120,6 +122,7 @@ WATCHLIST: dict[str, list[tuple[str, str]]] = {
     "real_estate": [
         ("CBRE", "CBRE"),
         ("Zillow Group", "Z"),
+        ("Rocket Companies", "RKT"),
     ],
 }
 
@@ -152,6 +155,7 @@ FX: list[tuple[str, str]] = [
     ("Dollar Index", "DX-Y.NYB"),
     ("EUR/USD", "EURUSD=X"),
     ("GBP/USD", "GBPUSD=X"),
+    ("AUD/USD", "AUDUSD=X"),
     ("USD/JPY", "JPY=X"),
     ("USD/CHF", "CHF=X"),
     ("USD/ZAR", "ZAR=X"),
@@ -216,7 +220,8 @@ YAHOO_TICKER_FEED_TMPL = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ti
 CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
 CLASSIFIER_BATCH_SIZE = 12
 TOP_N_PER_CLASS = 5
-CONTEXT_WINDOW_HOURS = 24
+# Override via env (DIGEST_CONTEXT_WINDOW_HOURS=120 for the Friday weekly wrap).
+CONTEXT_WINDOW_HOURS = int(os.environ.get("DIGEST_CONTEXT_WINDOW_HOURS", "24"))
 ASSET_CLASSES = ["equities", "fixed_income", "commodities", "fx", "macro"]
 
 # Claude Haiku 4.5 pricing (USD per token)
