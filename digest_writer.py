@@ -90,6 +90,20 @@ def _parse_json(text: str) -> Optional[Any]:
     return None
 
 
+def _extract_tool_input(resp, tool_name: str) -> Optional[dict]:
+    """Pull the .input dict from a tool_use block matching `tool_name`.
+
+    With `tool_choice` forcing a specific tool, the API guarantees the
+    response contains exactly one tool_use block with a schema-valid
+    `.input`. We still search defensively in case the SDK ever returns
+    extra content blocks.
+    """
+    for block in (resp.content or []):
+        if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == tool_name:
+            return block.input  # already a dict, schema-enforced by the API
+    return None
+
+
 def _round2(v):
     return round(v, 2) if isinstance(v, (int, float)) else None
 
@@ -201,16 +215,41 @@ event_type values:
 - "capital_markets"  — debt/equity issuance, IPOs, secondaries, tender offers, buybacks, credit facilities, private credit deals, fund closes, LP commitments
 - "other"            — any material catalyst that doesn't cleanly fit above
 
-For each qualifying company, return one object:
-{
-  "company_name": string,          // must match a watchlist name exactly
-  "ticker": string,                // must match the watchlist ticker exactly
-  "event_type": "earnings" | "corporate_action" | "guidance" | "analyst" | "regulatory" | "capital_markets" | "other",
-  "headline": string,              // short label for the event, e.g. "Q1 2026 Results", "$15B Credit Fund Close", "Google AI Chip Partnership"
-  "relevant_context_indices": [int, ...]   // indices into the provided context_items list
-}
+For each qualifying company, supply one entry in the tool's `companies` array. Maximum 7 entries — pick the highest-signal ones if you have more than 7 candidates. Prioritize earnings/M&A/regulatory over analyst chatter when ranking. Pass an empty array only if no watchlist company has any qualifying coverage in the context.
 
-Return a JSON array. Maximum 7 companies — pick the highest-signal ones if you have more than 7 candidates. Prioritize earnings/M&A/regulatory over analyst chatter when ranking. Return [] only if no watchlist company has any qualifying coverage in the context. Output only the JSON array."""
+`company_name` and `ticker` must match the provided watchlist exactly. `relevant_context_indices` lists 0-based indices into the provided context items.
+
+Call the `record_company_identifications` tool with your selection."""
+
+
+TOOL_IDENTIFY_COMPANIES = {
+    "name": "record_company_identifications",
+    "description": "Record the watchlist companies that have material news worth a dedicated section.",
+    "input_schema": {
+        "type": "object",
+        "required": ["companies"],
+        "properties": {
+            "companies": {
+                "type": "array",
+                "maxItems": MAX_COMPANY_SECTIONS,
+                "items": {
+                    "type": "object",
+                    "required": ["company_name", "ticker", "event_type", "headline", "relevant_context_indices"],
+                    "properties": {
+                        "company_name": {"type": "string"},
+                        "ticker": {"type": "string"},
+                        "event_type": {"type": "string", "enum": sorted(EVENT_TYPES)},
+                        "headline": {"type": "string"},
+                        "relevant_context_indices": {
+                            "type": "array",
+                            "items": {"type": "integer", "minimum": 0},
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
 
 
 def step_a_identify_companies(
@@ -256,20 +295,23 @@ def step_a_identify_companies(
             model=HAIKU_MODEL,
             max_tokens=1024,
             system=COMPANY_ID_SYSTEM,
+            tools=[TOOL_IDENTIFY_COMPANIES],
+            tool_choice={"type": "tool", "name": TOOL_IDENTIFY_COMPANIES["name"]},
             messages=[{"role": "user", "content": user_msg}],
         )
         cost.record(HAIKU_MODEL, resp.usage)
-        parsed = _parse_json(resp.content[0].text if resp.content else "")
-        if not isinstance(parsed, list):
-            warnings.append("Step A: company identification returned non-list")
+        tool_input = _extract_tool_input(resp, TOOL_IDENTIFY_COMPANIES["name"])
+        if tool_input is None:
+            warnings.append("Step A: model did not invoke the identification tool")
             return []
+        companies = tool_input.get("companies") or []
     except Exception as exc:
         warnings.append(f"Step A failed: {exc}")
         return []
 
     valid_tickers = {t for _, t in watchlist}
     results: list[dict] = []
-    for entry in parsed[:MAX_COMPANY_SECTIONS]:
+    for entry in companies[:MAX_COMPANY_SECTIONS]:
         if not isinstance(entry, dict):
             continue
         ticker = entry.get("ticker", "").strip()
@@ -306,8 +348,25 @@ VOICE: trader-formal, third person, dense, facts-first. No "we" or "I", no hype 
 
 CRITICAL — no fabrication: every number and every fact must come from the provided context snippets. If you don't have a number for something (e.g. precise consensus estimate), use language like "broadly in line with consensus" rather than inventing a figure. If the context is thin, write a thinner section rather than padding.
 
-Output a JSON object exactly in this form (no markdown, no preamble):
-{"paragraphs": ["<p1>", "<p2>", "<p3>"]}"""
+Call the `record_company_section` tool with the 3 paragraphs in order."""
+
+
+TOOL_COMPANY_SECTION = {
+    "name": "record_company_section",
+    "description": "Record the 3-paragraph company section.",
+    "input_schema": {
+        "type": "object",
+        "required": ["paragraphs"],
+        "properties": {
+            "paragraphs": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+}
 
 
 def step_b_company_section(
@@ -347,57 +406,27 @@ def step_b_company_section(
         "sources":      sources,
     }
 
-    raw_texts: list[str] = []
-    parsed = None
-    for attempt in range(2):
-        retry_user_msg = user_msg
-        if attempt == 1:
-            # Second attempt: stricter framing. Useful when the first response
-            # wrapped the JSON in prose ("Here's the section:...") or put the
-            # paragraphs in a different shape.
-            retry_user_msg += (
-                "\n\nReturn ONLY the JSON object specified in the system prompt "
-                "(starting with `{` and ending with `}`). No preamble, no markdown "
-                "code fence, no prose outside the JSON. Exactly this shape: "
-                '{"paragraphs": [string, string, string]}.'
-            )
-        try:
-            resp = client.messages.create(
-                model=SONNET_MODEL,
-                max_tokens=1500,
-                system=COMPANY_SECTION_SYSTEM,
-                messages=[{"role": "user", "content": retry_user_msg}],
-            )
-            cost.record(SONNET_MODEL, resp.usage)
-            raw = resp.content[0].text if resp.content else ""
-            raw_texts.append(raw)
-            parsed = _parse_json(raw)
-        except Exception as exc:
-            warnings.append(f"Step B: {company['ticker']} crashed: {exc}")
-            return {**shell, "paragraphs": [f"(section generation failed: {exc})"]}
-
-        if isinstance(parsed, dict) and isinstance(parsed.get("paragraphs"), list) and parsed["paragraphs"]:
-            return {**shell, "paragraphs": [str(p) for p in parsed["paragraphs"]]}
-
-    # Both attempts failed to produce a parseable response. Dump both raw
-    # outputs to a side file so we can tighten the prompt or parser later.
-    warnings.append(f"Step B: {company['ticker']} returned unparseable output after 2 attempts")
     try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        out_dir = os.path.join(script_dir, "output")
-        os.makedirs(out_dir, exist_ok=True)
-        today = datetime.now(timezone.utc).date().isoformat()
-        dump_path = os.path.join(out_dir, f"failed_parses_{today}.jsonl")
-        with open(dump_path, "a") as f:
-            f.write(json.dumps({
-                "ticker":    company["ticker"],
-                "headline":  company["headline"],
-                "attempts":  raw_texts,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }) + "\n")
-    except Exception:
-        pass  # best-effort; don't let a disk write break the pipeline
-    return {**shell, "paragraphs": ["(writer output unparseable)"]}
+        resp = client.messages.create(
+            model=SONNET_MODEL,
+            max_tokens=1500,
+            system=COMPANY_SECTION_SYSTEM,
+            tools=[TOOL_COMPANY_SECTION],
+            tool_choice={"type": "tool", "name": TOOL_COMPANY_SECTION["name"]},
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        cost.record(SONNET_MODEL, resp.usage)
+    except Exception as exc:
+        warnings.append(f"Step B: {company['ticker']} crashed: {exc}")
+        return {**shell, "paragraphs": [f"(section generation failed: {exc})"]}
+
+    tool_input = _extract_tool_input(resp, TOOL_COMPANY_SECTION["name"])
+    if tool_input is None or not tool_input.get("paragraphs"):
+        # Forced tool_choice means this shouldn't happen, but guard anyway.
+        warnings.append(f"Step B: {company['ticker']} did not invoke the section tool")
+        return {**shell, "paragraphs": ["(writer output unavailable)"]}
+
+    return {**shell, "paragraphs": [str(p) for p in tool_input["paragraphs"]]}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -422,8 +451,26 @@ VOICE:
 
 CRITICAL — no fabrication: every number must come from the provided market data block; every explanation must come from the provided context snippets. If a paragraph has data but no context to explain the move, state the move without speculating on drivers — do NOT invent reasoning. If an asset class has no material moves to report, keep that paragraph brief or fold it into an adjacent paragraph.
 
-Output a JSON object exactly in this form (no markdown, no preamble):
-{"title": "Markets Wrap – <short theme>", "paragraphs": ["<p1>", "<p2>", "<p3>", "<p4>"]}"""
+Call the `record_market_wrap` tool with a short thematic title and the 4 paragraphs in order (equities, fixed income, commodities & FX, macro & look-ahead)."""
+
+
+TOOL_MARKET_WRAP = {
+    "name": "record_market_wrap",
+    "description": "Record the daily 4-paragraph Market Wrap with a short thematic title.",
+    "input_schema": {
+        "type": "object",
+        "required": ["title", "paragraphs"],
+        "properties": {
+            "title": {"type": "string", "minLength": 1, "maxLength": 200},
+            "paragraphs": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+}
 
 
 def _format_market_data_for_wrap(md: dict) -> str:
@@ -532,26 +579,30 @@ def step_c_market_wrap(
     )
 
     empty = {"title": "Markets Wrap", "paragraphs": []}
+
     try:
         resp = client.messages.create(
             model=SONNET_MODEL,
             max_tokens=2500,
             system=MARKET_WRAP_SYSTEM,
+            tools=[TOOL_MARKET_WRAP],
+            tool_choice={"type": "tool", "name": TOOL_MARKET_WRAP["name"]},
             messages=[{"role": "user", "content": user_msg}],
         )
         cost.record(SONNET_MODEL, resp.usage)
-        parsed = _parse_json(resp.content[0].text if resp.content else "")
     except Exception as exc:
         warnings.append(f"Step C (Market Wrap) crashed: {exc}")
         return empty
 
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("paragraphs"), list):
-        warnings.append("Step C: Market Wrap output unparseable")
+    tool_input = _extract_tool_input(resp, TOOL_MARKET_WRAP["name"])
+    if tool_input is None or not tool_input.get("paragraphs"):
+        warnings.append("Step C: Market Wrap did not invoke the wrap tool")
         return empty
 
-    title = str(parsed.get("title") or "Markets Wrap")
-    paragraphs = [str(p) for p in parsed["paragraphs"]]
-    return {"title": title, "paragraphs": paragraphs}
+    return {
+        "title":      str(tool_input.get("title") or "Markets Wrap"),
+        "paragraphs": [str(p) for p in tool_input["paragraphs"]],
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════

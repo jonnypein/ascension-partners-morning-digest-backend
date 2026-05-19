@@ -15,10 +15,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from datetime import datetime, timezone
-from typing import Any, Optional
 
 import anthropic
 from dotenv import load_dotenv
@@ -121,32 +119,93 @@ The one_line_takeaway field:
    - "in-line" = both within +/-1% of consensus
    - "mixed" = any other combination (e.g. rev beat but EPS miss). Explain in beat_miss_rationale.
 6. If uncertain about any field, add it to flags.low_confidence_fields. Do not paper over uncertainty.
-7. Return only the JSON object. No preamble, no markdown code fences, no commentary.
+7. Call the `record_earnings_card` tool with the structured card. Do not return prose.
 </critical_rules>
 """
 
 
-def _strip_fences(text: str) -> str:
-    s = text.strip()
-    if s.startswith("```"):
-        s = re.sub(r"^```(?:json)?\s*", "", s)
-        s = re.sub(r"\s*```\s*$", "", s)
-    return s.strip()
+_NULLABLE_NUMBER = {"type": ["number", "null"]}
 
-
-def _parse_json(text: str) -> Optional[Any]:
-    s = _strip_fences(text)
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r"\{.*\}", s, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group())
-        except json.JSONDecodeError:
-            return None
-    return None
+TOOL_EARNINGS_CARD = {
+    "name": "record_earnings_card",
+    "description": "Record the structured earnings card for one company's quarterly print.",
+    "input_schema": {
+        "type": "object",
+        "required": [
+            "ticker", "company_name", "fiscal_period", "headline", "tag",
+            "one_line_takeaway", "results", "guidance", "price_reaction",
+            "digest_paragraph", "flags",
+        ],
+        "properties": {
+            "ticker":            {"type": "string"},
+            "company_name":      {"type": "string"},
+            "fiscal_period":     {"type": "string"},
+            "headline":          {"type": "string"},
+            "tag":               {"type": "string", "enum": ["beat", "miss", "in-line", "mixed"]},
+            "one_line_takeaway": {"type": "string"},
+            "digest_paragraph":  {"type": "string"},
+            "results": {
+                "type": "object",
+                "required": [
+                    "revenue_actual", "revenue_consensus", "revenue_surprise_pct",
+                    "eps_actual", "eps_consensus", "eps_surprise_pct",
+                    "segment_highlights", "beat_miss_rationale",
+                ],
+                "properties": {
+                    "revenue_actual":       _NULLABLE_NUMBER,
+                    "revenue_consensus":    _NULLABLE_NUMBER,
+                    "revenue_surprise_pct": _NULLABLE_NUMBER,
+                    "eps_actual":           _NULLABLE_NUMBER,
+                    "eps_consensus":        _NULLABLE_NUMBER,
+                    "eps_surprise_pct":     _NULLABLE_NUMBER,
+                    "segment_highlights": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["segment", "actual", "vs_consensus_pct", "note"],
+                            "properties": {
+                                "segment":          {"type": "string"},
+                                "actual":           _NULLABLE_NUMBER,
+                                "vs_consensus_pct": _NULLABLE_NUMBER,
+                                "note":             {"type": "string"},
+                            },
+                        },
+                    },
+                    "beat_miss_rationale": {"type": "string"},
+                },
+            },
+            "guidance": {
+                "type": "object",
+                "required": ["direction", "summary", "key_changes"],
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "enum": ["raised", "lowered", "maintained", "initiated", "withdrawn", "not_provided"],
+                    },
+                    "summary":     {"type": "string"},
+                    "key_changes": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+            "price_reaction": {
+                "type": "object",
+                "required": ["move_pct", "move_context", "interpretation"],
+                "properties": {
+                    "move_pct":       {"type": "number"},
+                    "move_context":   {"type": "string", "enum": ["after-hours", "next-session"]},
+                    "interpretation": {"type": "string"},
+                },
+            },
+            "flags": {
+                "type": "object",
+                "required": ["low_confidence_fields", "missing_data"],
+                "properties": {
+                    "low_confidence_fields": {"type": "array", "items": {"type": "string"}},
+                    "missing_data":          {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+    },
+}
 
 
 def _fmt_number(v) -> str:
@@ -237,79 +296,48 @@ def validate_card(card: dict, bundle: dict, warnings: list) -> dict:
 def generate_card(client: anthropic.Anthropic, bundle: dict, warnings: list) -> tuple[dict | None, dict]:
     """Return (card_dict_or_None, usage_dict).
 
-    Two attempts. The second adds a stricter "JSON only" framing in case the
-    first response wrapped the payload in prose or a code fence. If both
-    attempts produce unparseable output, dump both raw responses to
-    output/failed_parses_<date>.jsonl for offline diagnosis. Mirrors the
-    pattern in digest_writer.py:step_b_company_section — added after the
-    Apr 24 incident where AXP and CBRE were silently dropped on transient
-    parse failures.
+    Uses the Anthropic API's tool-use mechanism with forced tool_choice, so
+    the model's output is schema-validated at the decoder level. The earlier
+    retry+dump scaffolding for malformed JSON is no longer needed.
     """
     user_msg = render_input_block(bundle)
-    raw_texts: list[str] = []
-    total_in = 0
-    total_out = 0
 
-    for attempt in range(2):
-        retry_user_msg = user_msg
-        if attempt == 1:
-            retry_user_msg += (
-                "\n\nReturn ONLY the JSON object specified in the system prompt "
-                "(starting with `{` and ending with `}`). No preamble, no markdown "
-                "code fence, no prose outside the JSON."
-            )
-        try:
-            resp = client.messages.create(
-                model=SONNET_MODEL,
-                max_tokens=2500,
-                system=[{
-                    "type": "text",
-                    "text": EARNINGS_CARD_SYSTEM,
-                    "cache_control": {"type": "ephemeral"},
-                }],
-                messages=[{"role": "user", "content": retry_user_msg}],
-            )
-        except Exception as exc:
-            warnings.append(f"{bundle['ticker']}: Claude call failed (attempt {attempt + 1}): {exc}")
-            return None, {"input_tokens": total_in, "output_tokens": total_out}
-
-        total_in += resp.usage.input_tokens
-        total_out += resp.usage.output_tokens
-
-        text = resp.content[0].text if resp.content else ""
-        raw_texts.append(text)
-        parsed = _parse_json(text)
-
-        if isinstance(parsed, dict):
-            card = validate_card(parsed, bundle, warnings)
-            card["_source"] = {
-                "press_release_url": bundle["press_release"]["source_url"],
-                "accession_number": bundle["press_release"]["accession_number"],
-                "filed_at": bundle["filed_at"],
-            }
-            return card, {"input_tokens": total_in, "output_tokens": total_out}
-
-    # Both attempts failed — surface the warning and dump raw outputs so
-    # the next session can tighten the prompt or the parser.
-    warnings.append(f"{bundle['ticker']}: unparseable model output after 2 attempts")
     try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        out_dir = os.path.join(script_dir, "output")
-        os.makedirs(out_dir, exist_ok=True)
-        today = datetime.now(timezone.utc).date().isoformat()
-        dump_path = os.path.join(out_dir, f"failed_parses_{today}.jsonl")
-        with open(dump_path, "a") as f:
-            f.write(json.dumps({
-                "source": "earnings_writer",
-                "ticker": bundle["ticker"],
-                "fiscal_period": bundle.get("fiscal_period"),
-                "filed_at": bundle.get("filed_at"),
-                "attempts": raw_texts,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }) + "\n")
-    except Exception:
-        pass  # best-effort; don't let a disk write break the pipeline
-    return None, {"input_tokens": total_in, "output_tokens": total_out}
+        resp = client.messages.create(
+            model=SONNET_MODEL,
+            max_tokens=2500,
+            system=[{
+                "type": "text",
+                "text": EARNINGS_CARD_SYSTEM,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            tools=[TOOL_EARNINGS_CARD],
+            tool_choice={"type": "tool", "name": TOOL_EARNINGS_CARD["name"]},
+            messages=[{"role": "user", "content": user_msg}],
+        )
+    except Exception as exc:
+        warnings.append(f"{bundle['ticker']}: Claude call failed: {exc}")
+        return None, {"input_tokens": 0, "output_tokens": 0}
+
+    usage = {"input_tokens": resp.usage.input_tokens, "output_tokens": resp.usage.output_tokens}
+
+    tool_input = None
+    for block in (resp.content or []):
+        if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == TOOL_EARNINGS_CARD["name"]:
+            tool_input = block.input
+            break
+
+    if not isinstance(tool_input, dict):
+        warnings.append(f"{bundle['ticker']}: model did not invoke the earnings card tool")
+        return None, usage
+
+    card = validate_card(tool_input, bundle, warnings)
+    card["_source"] = {
+        "press_release_url": bundle["press_release"]["source_url"],
+        "accession_number": bundle["press_release"]["accession_number"],
+        "filed_at": bundle["filed_at"],
+    }
+    return card, usage
 
 
 def load_input(path: str | None) -> dict:

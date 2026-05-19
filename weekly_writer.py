@@ -47,9 +47,9 @@ from dotenv import load_dotenv
 from digest_writer import (
     SONNET_MODEL,
     CostTracker,
+    _extract_tool_input,
     _format_context_for_wrap,
     _format_market_data_for_wrap,
-    _parse_json,
     load_input,
     step_d_market_snapshot,
 )
@@ -80,8 +80,26 @@ VOICE:
 
 CRITICAL — no fabrication: every number must come from the provided market data block; every explanation must come from the provided context snippets. The market data shows 1d/1w/YTD moves — anchor on the 1w move. If a paragraph has data but no context to explain a move, state the move without speculating on drivers — do NOT invent reasoning. The paragraph 5 look-ahead should be drawn from forward-looking items in the context (earnings preview headlines, central bank meeting dates mentioned in source articles); if context has no clear forward catalysts, keep paragraph 5 brief and acknowledge the calendar quietly rather than inventing events.
 
-Output a JSON object exactly in this form (no markdown, no preamble):
-{"title": "Weekly Wrap – <short theme>", "paragraphs": ["<p1>", "<p2>", "<p3>", "<p4>", "<p5>"]}"""
+Call the `record_weekly_wrap` tool with a short thematic title and the 5 paragraphs in order."""
+
+
+TOOL_WEEKLY_WRAP = {
+    "name": "record_weekly_wrap",
+    "description": "Record the Friday 5-paragraph weekly market wrap with a short thematic title.",
+    "input_schema": {
+        "type": "object",
+        "required": ["title", "paragraphs"],
+        "properties": {
+            "title": {"type": "string", "minLength": 1, "maxLength": 200},
+            "paragraphs": {
+                "type": "array",
+                "minItems": 5,
+                "maxItems": 5,
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+}
 
 
 def step_weekly_wrap(
@@ -108,21 +126,24 @@ def step_weekly_wrap(
             model=SONNET_MODEL,
             max_tokens=3500,
             system=WEEKLY_WRAP_SYSTEM,
+            tools=[TOOL_WEEKLY_WRAP],
+            tool_choice={"type": "tool", "name": TOOL_WEEKLY_WRAP["name"]},
             messages=[{"role": "user", "content": user_msg}],
         )
         cost.record(SONNET_MODEL, resp.usage)
-        parsed = _parse_json(resp.content[0].text if resp.content else "")
     except Exception as exc:
         warnings.append(f"Weekly wrap step crashed: {exc}")
         return empty
 
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("paragraphs"), list):
-        warnings.append("Weekly wrap: output unparseable")
+    tool_input = _extract_tool_input(resp, TOOL_WEEKLY_WRAP["name"])
+    if tool_input is None or not tool_input.get("paragraphs"):
+        warnings.append("Weekly wrap: model did not invoke the wrap tool")
         return empty
 
-    title = str(parsed.get("title") or "Weekly Wrap")
-    paragraphs = [str(p) for p in parsed["paragraphs"]]
-    return {"title": title, "paragraphs": paragraphs}
+    return {
+        "title":      str(tool_input.get("title") or "Weekly Wrap"),
+        "paragraphs": [str(p) for p in tool_input["paragraphs"]],
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
