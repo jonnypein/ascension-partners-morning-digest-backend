@@ -679,21 +679,35 @@ def step_c_market_wrap(
 # STEP D — numeric market snapshot (pure transform)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _equity_snap(rec: dict) -> dict:
+    """Numeric + history shape for chart-friendly price tickers
+    (indices, sectors, watchlist, commodities, fx).
+    """
+    return {
+        "name":           rec.get("name"),
+        "ticker":         rec.get("ticker"),
+        "last":           _round2(rec.get("last")),
+        "change_1d_pct":  _round2(rec.get("change_1d_pct")),
+        "change_1w_pct":  _round2(rec.get("change_1w_pct")),
+        "change_ytd_pct": _round2(rec.get("change_ytd_pct")),
+        "history":        rec.get("history") or [],
+    }
+
+
 def step_d_market_snapshot(input_data: dict) -> dict:
+    """Numeric snapshot for the frontend. Includes a 90-day price history
+    on every chart-friendly ticker so Lovable can render sparklines without
+    a separate data fetch.
+    """
     md = input_data.get("market_data") or {}
     eq = md.get("equities", {}) or {}
     return {
-        "indices": [
-            {
-                "name":           i.get("name"),
-                "ticker":         i.get("ticker"),
-                "last":           _round2(i.get("last")),
-                "change_1d_pct":  _round2(i.get("change_1d_pct")),
-                "change_1w_pct":  _round2(i.get("change_1w_pct")),
-                "change_ytd_pct": _round2(i.get("change_ytd_pct")),
-            }
-            for i in (eq.get("indices") or [])
-        ],
+        "indices":    [_equity_snap(i) for i in (eq.get("indices") or [])],
+        "us_sectors": [_equity_snap(s) for s in (eq.get("us_sectors") or [])],
+        "watchlist": {
+            grp: [_equity_snap(it) for it in items]
+            for grp, items in (eq.get("watchlist") or {}).items()
+        },
         "fixed_income": [
             {
                 "name":            fi.get("name"),
@@ -701,27 +715,19 @@ def step_d_market_snapshot(input_data: dict) -> dict:
                 "last_yield_pct":  _round2(fi.get("last_yield_pct")),
                 "change_1d_bps":   _round1(fi.get("change_1d_bps")),
                 "change_1w_bps":   _round1(fi.get("change_1w_bps")),
+                "history":         fi.get("history") or [],
             }
             for fi in (md.get("fixed_income") or [])
         ],
-        "commodities": [
-            {
-                "name":           c.get("name"),
-                "ticker":         c.get("ticker"),
-                "last":           _round2(c.get("last")),
-                "change_1d_pct":  _round2(c.get("change_1d_pct")),
-                "change_1w_pct":  _round2(c.get("change_1w_pct")),
-                "change_ytd_pct": _round2(c.get("change_ytd_pct")),
-            }
-            for c in (md.get("commodities") or [])
-        ],
+        "commodities": [_equity_snap(c) for c in (md.get("commodities") or [])],
         "fx": [
             {
-                "name":           fx.get("name"),
-                "ticker":         fx.get("ticker"),
-                "last":           _round2(fx.get("last")),
-                "change_1d_pct":  _round2(fx.get("change_1d_pct")),
-                "change_1w_pct":  _round2(fx.get("change_1w_pct")),
+                "name":          fx.get("name"),
+                "ticker":        fx.get("ticker"),
+                "last":          _round2(fx.get("last")),
+                "change_1d_pct": _round2(fx.get("change_1d_pct")),
+                "change_1w_pct": _round2(fx.get("change_1w_pct")),
+                "history":       fx.get("history") or [],
             }
             for fx in (md.get("fx") or [])
         ],

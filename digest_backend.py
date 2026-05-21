@@ -267,6 +267,18 @@ def _tz_naive(s: pd.Series) -> pd.Series:
     return s
 
 
+def _series_to_history(s: pd.Series, max_points: int = 90) -> list[list]:
+    """Format a price/yield series as [[date_iso, value], ...] for frontend
+    sparkline rendering. Keeps the last `max_points` trading days (default
+    90 ≈ one quarter, enough visual context for 1d/1w sparklines and a
+    reasonable proxy for YTD by mid-year). Rounded to 4dp for compactness.
+    """
+    if s is None or s.empty:
+        return []
+    s = _tz_naive(s.dropna()).tail(max_points)
+    return [[idx.date().isoformat(), round(float(val), 4)] for idx, val in s.items()]
+
+
 def _download_close_prices(tickers: list[str], start: str) -> dict[str, pd.Series]:
     """Batch-download daily adjusted close prices. Returns {ticker: Series}."""
     if not tickers:
@@ -339,6 +351,7 @@ def _equity_record(
         "change_1d_pct": change_1d,
         "change_1w_pct": change_1w,
         "change_ytd_pct": change_ytd,
+        "history": _series_to_history(s),
     }, None
 
 
@@ -363,6 +376,7 @@ def _fi_record(
         "last_yield_pct": last_yield,
         "change_1d_bps": change_1d_bps,
         "change_1w_bps": change_1w_bps,
+        "history": _series_to_history(s),
     }, None
 
 
