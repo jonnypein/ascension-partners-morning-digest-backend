@@ -5,7 +5,7 @@ session. Update it whenever you update `TodoWrite` with meaningful status
 changes — otherwise the in-session todos vanish and future sessions lose
 context.
 
-Last updated: 2026-05-21 (Thursday, afternoon) — content-reactive chart hints shipped
+Last updated: 2026-05-21 (Thursday, late) — chart_hints + history shipped; charts UI-side reverted
 
 ## Session 2026-05-21
 
@@ -30,6 +30,29 @@ Last updated: 2026-05-21 (Thursday, afternoon) — content-reactive chart hints 
   bonus given NVDA reports today. Macro paragraph correctly omitted.
   Zero warnings, zero tickers dropped, $0.17 (basically flat vs the
   prior $0.16 baseline).
+
+- **Server-side 90-day price history added** (commit `b3efedd`).
+  Each chart-friendly ticker in `digest.market_snapshot` now carries
+  a `history` field shaped `[[date_iso, value], ...]` — 90 trading
+  days of daily closes (or yields for FI). Snapshot expanded to include
+  `us_sectors` and `watchlist` so the universe matches what
+  `chart_hints` can reference. Row size: 33KB → ~197KB per digest.
+  `_series_to_history` in `digest_backend.py` caps at 90 points and
+  rounds to 4dp.
+
+- **Decision: charts UI-side reverted.** Tried three Lovable layouts —
+  margin labels per paragraph, single floating sparkline per paragraph,
+  and one hero chart above the wrap. All looked wrong against the
+  editorial typography (financial-magazine prose + sparklines fight
+  for attention; neither earns its space). User reverted Lovable to
+  text-only. **Backend infrastructure stays in place** — `chart_hints`
+  + `history` continue to be emitted on every run. Cost is trivial
+  (~$1/year for the extra Sonnet output tokens) and the data is ready
+  if/when a non-editorial chart surface appears (company `/companies/:ticker`
+  pages, a dashboard page, an embedded preview, etc.). **Don't re-litigate
+  this in a future session** — the inline-chart approach has been ruled
+  out for the wrap itself. The next chart attempt should be on a
+  different page/component, not inside the editorial prose.
 
 ## Session 2026-05-20
 
@@ -125,15 +148,16 @@ Last updated: 2026-05-21 (Thursday, afternoon) — content-reactive chart hints 
 
 8. **Propagate the alert pattern to weekly_wrap publish** once #6 lands.
 
-9. **Lovable: render chart_hints as sparklines.** Backend now emits
-   `digest.market_wrap.chart_hints` and `wrap.weekly_wrap.chart_hints`
-   shaped as `[{ticker, paragraph_index, timeframe, importance}, ...]`.
-   Frontend needs: (a) some source of historical price/yield data per
-   ticker — either fetch client-side from Yahoo Finance, or have us
-   extend `market_snapshot` server-side to include a small price
-   history per charted ticker; (b) place a small sparkline next to
-   the paragraph whose `paragraph_index` matches, ordered by
-   `importance`. Decide source-of-data approach before scoping the UI.
+9. **Charts: parked, NOT in the editorial wrap.** Backend emits
+   `digest.market_wrap.chart_hints`, `wrap.weekly_wrap.chart_hints`, and
+   90-day `history` arrays on every chart-friendly ticker in
+   `market_snapshot`. The Lovable wrap UI tried three sparkline layouts
+   on 2026-05-21 and all clashed with the editorial typography — the
+   call was to revert to text-only and leave the backend data in place
+   for a future non-editorial chart surface. Reasonable next homes when
+   we get to it: (a) the `/companies/:ticker` page (chart per company);
+   (b) a separate `/markets` dashboard page; (c) an admin/preview view.
+   The wrap itself should stay prose-only.
 
 Last updated: 2026-05-06 (Wednesday) — watchlist add + Friday weekly wrap
 
