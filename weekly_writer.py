@@ -50,6 +50,7 @@ from digest_writer import (
     _extract_tool_input,
     _format_context_for_wrap,
     _format_market_data_for_wrap,
+    _valid_chart_tickers,
     load_input,
     step_d_market_snapshot,
 )
@@ -80,12 +81,19 @@ VOICE:
 
 CRITICAL — no fabrication: every number must come from the provided market data block; every explanation must come from the provided context snippets. The market data shows 1d/1w/YTD moves — anchor on the 1w move. If a paragraph has data but no context to explain a move, state the move without speculating on drivers — do NOT invent reasoning. The paragraph 5 look-ahead should be drawn from forward-looking items in the context (earnings preview headlines, central bank meeting dates mentioned in source articles); if context has no clear forward catalysts, keep paragraph 5 brief and acknowledge the calendar quietly rather than inventing events.
 
-Call the `record_weekly_wrap` tool with a short thematic title and the 5 paragraphs in order."""
+CHART HINTS — alongside the prose, tag the tickers whose charts most match what each paragraph discusses. The frontend uses these to render sparklines next to the relevant paragraph. Rules:
+- Use ticker strings EXACTLY as shown in MARKET DATA above (e.g. ^GSPC, XLE, NVDA, ^TNX, BZ=F, DX-Y.NYB). Do not invent tickers.
+- paragraph_index is 0-based: paragraph 1 (equities) is 0, paragraph 5 (look-ahead) is 4.
+- timeframe matches the horizon you anchor on in that paragraph: "1d" for a specific day's move, "1w" for the week's, "ytd" for cumulative context. Anchor weekly paragraphs on "1w" by default.
+- importance: 1 = the chart most central to the week's narrative, 2 = secondary, 3 = supporting context.
+- No more than 8 hints across the wrap. Per paragraph, 1-2 hints is typical. Omit for paragraphs where no specific ticker materially adds (the look-ahead paragraph often won't have any).
+
+Call the `record_weekly_wrap` tool with a short thematic title, the 5 paragraphs in order, and chart hints."""
 
 
 TOOL_WEEKLY_WRAP = {
     "name": "record_weekly_wrap",
-    "description": "Record the Friday 5-paragraph weekly market wrap with a short thematic title.",
+    "description": "Record the Friday 5-paragraph weekly market wrap with a short thematic title, plus chart hints.",
     "input_schema": {
         "type": "object",
         "required": ["title", "paragraphs"],
@@ -96,6 +104,20 @@ TOOL_WEEKLY_WRAP = {
                 "minItems": 5,
                 "maxItems": 5,
                 "items": {"type": "string", "minLength": 1},
+            },
+            "chart_hints": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "required": ["ticker", "paragraph_index", "timeframe", "importance"],
+                    "properties": {
+                        "ticker":          {"type": "string", "minLength": 1},
+                        "paragraph_index": {"type": "integer", "minimum": 0, "maximum": 4},
+                        "timeframe":       {"type": "string", "enum": ["1d", "1w", "ytd"]},
+                        "importance":      {"type": "integer", "minimum": 1, "maximum": 3},
+                    },
+                },
             },
         },
     },
@@ -140,9 +162,26 @@ def step_weekly_wrap(
         warnings.append("Weekly wrap: model did not invoke the wrap tool")
         return empty
 
+    valid_tickers = _valid_chart_tickers(md)
+    filtered_hints: list[dict] = []
+    for h in (tool_input.get("chart_hints") or []):
+        if not isinstance(h, dict):
+            continue
+        ticker = h.get("ticker")
+        if ticker not in valid_tickers:
+            warnings.append(f"Weekly wrap: dropped chart_hint with unknown ticker '{ticker}'")
+            continue
+        filtered_hints.append({
+            "ticker":          ticker,
+            "paragraph_index": h.get("paragraph_index"),
+            "timeframe":       h.get("timeframe"),
+            "importance":      h.get("importance"),
+        })
+
     return {
-        "title":      str(tool_input.get("title") or "Weekly Wrap"),
-        "paragraphs": [str(p) for p in tool_input["paragraphs"]],
+        "title":       str(tool_input.get("title") or "Weekly Wrap"),
+        "paragraphs":  [str(p) for p in tool_input["paragraphs"]],
+        "chart_hints": filtered_hints,
     }
 
 

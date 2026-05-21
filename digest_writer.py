@@ -451,12 +451,19 @@ VOICE:
 
 CRITICAL — no fabrication: every number must come from the provided market data block; every explanation must come from the provided context snippets. If a paragraph has data but no context to explain the move, state the move without speculating on drivers — do NOT invent reasoning. If an asset class has no material moves to report, keep that paragraph brief or fold it into an adjacent paragraph.
 
-Call the `record_market_wrap` tool with a short thematic title and the 4 paragraphs in order (equities, fixed income, commodities & FX, macro & look-ahead)."""
+CHART HINTS — alongside the prose, tag the tickers whose charts most match what each paragraph discusses. The frontend uses these to render small sparklines next to the relevant paragraph. Rules:
+- Use ticker strings EXACTLY as shown in MARKET DATA above (e.g. ^GSPC, XLE, NVDA, ^TNX, BZ=F, DX-Y.NYB). Do not invent tickers.
+- paragraph_index is 0-based: paragraph 1 (equities) is 0, paragraph 4 (macro) is 3.
+- timeframe matches the horizon you anchor on in that paragraph: "1d" for today's move, "1w" for the week's, "ytd" for cumulative context.
+- importance: 1 = the chart most central to the day's narrative, 2 = secondary, 3 = supporting context.
+- No more than 6 hints across the whole wrap. Per paragraph, 0-2 hints is typical. Omit entirely if no specific ticker materially adds to the prose (commonly the macro/look-ahead paragraph).
+
+Call the `record_market_wrap` tool with a short thematic title, the 4 paragraphs in order (equities, fixed income, commodities & FX, macro & look-ahead), and chart hints."""
 
 
 TOOL_MARKET_WRAP = {
     "name": "record_market_wrap",
-    "description": "Record the daily 4-paragraph Market Wrap with a short thematic title.",
+    "description": "Record the daily 4-paragraph Market Wrap with a short thematic title, plus chart hints for each paragraph.",
     "input_schema": {
         "type": "object",
         "required": ["title", "paragraphs"],
@@ -468,9 +475,55 @@ TOOL_MARKET_WRAP = {
                 "maxItems": 4,
                 "items": {"type": "string", "minLength": 1},
             },
+            "chart_hints": {
+                "type": "array",
+                "maxItems": 6,
+                "items": {
+                    "type": "object",
+                    "required": ["ticker", "paragraph_index", "timeframe", "importance"],
+                    "properties": {
+                        "ticker":          {"type": "string", "minLength": 1},
+                        "paragraph_index": {"type": "integer", "minimum": 0, "maximum": 3},
+                        "timeframe":       {"type": "string", "enum": ["1d", "1w", "ytd"]},
+                        "importance":      {"type": "integer", "minimum": 1, "maximum": 3},
+                    },
+                },
+            },
         },
     },
 }
+
+
+def _valid_chart_tickers(md: dict) -> set[str]:
+    """Collect every ticker symbol present in this market_data dict.
+
+    Used to validate chart_hints emitted by the writer — any hint whose
+    ticker isn't in this set gets dropped, since the frontend has no
+    time-series for it. Macro/FRED series_ids are excluded on purpose;
+    they don't render as the same kind of sparkline.
+    """
+    tickers: set[str] = set()
+    eq = md.get("equities", {}) or {}
+    for i in eq.get("indices", []) or []:
+        if i.get("ticker"):
+            tickers.add(i["ticker"])
+    for s in eq.get("us_sectors", []) or []:
+        if s.get("ticker"):
+            tickers.add(s["ticker"])
+    for group_items in (eq.get("watchlist") or {}).values():
+        for it in group_items:
+            if it.get("ticker"):
+                tickers.add(it["ticker"])
+    for fi in md.get("fixed_income", []) or []:
+        if fi.get("ticker"):
+            tickers.add(fi["ticker"])
+    for c in md.get("commodities", []) or []:
+        if c.get("ticker"):
+            tickers.add(c["ticker"])
+    for fx in md.get("fx", []) or []:
+        if fx.get("ticker"):
+            tickers.add(fx["ticker"])
+    return tickers
 
 
 def _format_market_data_for_wrap(md: dict) -> str:
@@ -599,9 +652,26 @@ def step_c_market_wrap(
         warnings.append("Step C: Market Wrap did not invoke the wrap tool")
         return empty
 
+    valid_tickers = _valid_chart_tickers(md)
+    filtered_hints: list[dict] = []
+    for h in (tool_input.get("chart_hints") or []):
+        if not isinstance(h, dict):
+            continue
+        ticker = h.get("ticker")
+        if ticker not in valid_tickers:
+            warnings.append(f"Step C: dropped chart_hint with unknown ticker '{ticker}'")
+            continue
+        filtered_hints.append({
+            "ticker":          ticker,
+            "paragraph_index": h.get("paragraph_index"),
+            "timeframe":       h.get("timeframe"),
+            "importance":      h.get("importance"),
+        })
+
     return {
-        "title":      str(tool_input.get("title") or "Markets Wrap"),
-        "paragraphs": [str(p) for p in tool_input["paragraphs"]],
+        "title":       str(tool_input.get("title") or "Markets Wrap"),
+        "paragraphs":  [str(p) for p in tool_input["paragraphs"]],
+        "chart_hints": filtered_hints,
     }
 
 

@@ -5,6 +5,136 @@ session. Update it whenever you update `TodoWrite` with meaningful status
 changes — otherwise the in-session todos vanish and future sessions lose
 context.
 
+Last updated: 2026-05-21 (Thursday, afternoon) — content-reactive chart hints shipped
+
+## Session 2026-05-21
+
+- **Smart chart hints shipped on both daily + weekly wraps.** Extended
+  `TOOL_MARKET_WRAP` and `TOOL_WEEKLY_WRAP` schemas with an optional
+  `chart_hints` array (max 6 for daily, 8 for weekly). Each hint is
+  `{ticker, paragraph_index, timeframe ∈ {1d,1w,ytd}, importance ∈ {1,2,3}}`
+  and is schema-enforced by the tool-use decoder. Sonnet picks the
+  charts most relevant to each paragraph alongside the prose.
+- **Python-side validation** (`_valid_chart_tickers` in `digest_writer.py`):
+  drops any hint whose ticker isn't in the live market_data universe.
+  Same defence-in-depth pattern as the watchlist whitelist in step A.
+  Reused from `weekly_writer.py` via import.
+- **System prompts updated** for both wraps to instruct Sonnet on the
+  rules (ticker strings exact, paragraph_index 0-based, timeframe
+  matches horizon, importance 1-3, omit paragraphs where nothing
+  charts well).
+- **Live smoke test 2026-05-21**: full `run_daily.py --now` produced
+  the digest dated 2026-05-20 with 6 chart hints across the wrap.
+  Hints picked were spot-on: ^GSPC 1d for the equity paragraph, ^TNX
+  1w for fixed income, BZ=F 1d + GC=F 1w for commodities, NVDA YTD
+  bonus given NVDA reports today. Macro paragraph correctly omitted.
+  Zero warnings, zero tickers dropped, $0.17 (basically flat vs the
+  prior $0.16 baseline).
+
+## Session 2026-05-20
+
+### Done this session
+
+- **Caught a silent prod bug**: today's 06:30 UTC cron published an empty
+  Market Wrap to Supabase (`{"title": "Markets Wrap", "paragraphs": []}`).
+  Cron logs said success; only spotted by eyeballing the page. Root cause:
+  Sonnet was intermittently emitting structurally-malformed JSON
+  (trailing `}}`, mid-string `}`) on writer prompts that morning. step_b
+  caught it with retry+dump (CRM dumped to `failed_parses_2026-05-19.jsonl`,
+  recovered from GH artifact); step_c lacked the same scaffolding so the
+  parse failure fell into the empty fallback silently.
+
+- **Tactical fix** (commit then superseded by tool-use migration):
+  ported step_b's retry+dump pattern to step_c. Re-ran `run_daily.py --now`
+  to overwrite the broken row with a clean 4-para wrap.
+
+- **Strategic fix shipped** (commit `5de8826`, pushed to `origin/main`):
+  migrated all three writers — `digest_writer.py` (steps A/B/C),
+  `weekly_writer.py`, `earnings_writer.py` — to Anthropic's tool-use
+  mechanism with forced `tool_choice`. JSON Schema enforces shape at the
+  decoder level (`required`, `enum`, `minItems`/`maxItems`,
+  `["number","null"]` for nullable fields). The malformed-JSON class of
+  failure is now structurally impossible. `_parse_json` left in
+  `digest_writer.py` because `weekly_writer.py` previously imported it;
+  removed from `earnings_writer.py` (file-local). Diff: +275/-175.
+  Smoke-tested live end-to-end on 2026-05-19; zero warnings,
+  ~$0.16/run unchanged. 9 API calls down from 11 (no retries needed).
+
+- **Confirmed pipeline runs clean on 2026-05-20** (interview-morning
+  manual `--now` run): "Yield Surge Buries Equities as Iran Tensions
+  Keep Oil Bid", 4-para wrap, 867 words, 7 sections, zero warnings.
+  First cron-style end-to-end run on the new tool-use writers — clean.
+
+- **Discovered duplicate-row issue in `consensus_snapshots` table during
+  interview-eve eyeball check**: every ticker has TWO rows (one with
+  `fundamentals: null` from a pre-2026-04-30 schema state, one with the
+  populated fundamentals block). Root cause: schema has only an
+  *index* on `(ticker, asof_date)`, no UNIQUE constraint, so
+  `publish_consensus_snapshot`'s `on_conflict=ticker,asof_date` directive
+  silently falls back to insert instead of upserting. 33 distinct
+  tickers, 66 rows total, no data loss risk if nulls are dropped.
+
+- **Diagnosed Lovable EPS-Beats rendering bug**: ACTUAL EPS and ESTIMATE
+  columns show dashes on `/companies/:ticker` (verified against BLK).
+  SURPRISE % and BEAT? columns render correctly — Lovable IS reading
+  the populated `consensus_snapshots` row. The field-mapping for the
+  EPS amount columns is wrong (probably looking for `actual`/`estimate`
+  instead of `eps_actual`/`eps_estimate` — backend writes
+  the latter, see `consensus_builder.py:_eps_beat_history`).
+  Not a backend issue.
+
+### Currently in progress / parked follow-ups (pick up next session)
+
+1. **Add UNIQUE constraint to `consensus_snapshots`** — root cause of the
+   duplicate-row issue. Manual SQL migration in Supabase SQL Editor:
+   `ALTER TABLE consensus_snapshots ADD CONSTRAINT consensus_unique_ticker_asof
+   UNIQUE (ticker, asof_date);`. Until added, every `consensus_builder.py`
+   run will stack a new row instead of upserting.
+
+2. **Clean up the 33 null-fundamentals rows** once the constraint is in
+   place: `DELETE FROM consensus_snapshots WHERE fundamentals IS NULL;`.
+   Safe — every ticker has a populated row that's a strict superset.
+   Don't delete before the constraint is added (defeats the cleanup
+   when the next run re-inserts).
+
+3. **Lovable fix for EPS Beats table** on `/companies/:ticker`: map the
+   ACTUAL EPS column to `eps_actual` and ESTIMATE to `eps_estimate`
+   (currently rendering dashes because of field-name mismatch). Write a
+   short Lovable prompt the user can paste.
+
+4. **Diagnose 4 classifier batch errors** on the 2026-05-20 manual run
+   (`Context: classified 773 items, 167 selected across 5 asset classes,
+   4 errors`). Output was unaffected (errors default to `relevance: 0`
+   and get filtered out) but worth understanding. Check `digest_backend.py`
+   `_classify_batch` exception path — likely either rate limiting or
+   transient API errors.
+
+5. **Surface `meta.warnings` in Lovable** so silent failures are visible
+   without log-spelunking. Today's row had a warning sitting in the meta
+   column that the user couldn't see in the UI. A small grey banner or
+   admin-only block would close this gap permanently.
+
+6. **Alert on silent failure** — five-line addition to `run_daily.py`:
+   Slack webhook or email when `meta.warnings` is non-empty OR
+   `market_wrap.paragraphs` has fewer than 3 entries. Catches the next
+   regression at 06:35 UTC instead of when the user notices.
+
+7. **Manual Supabase SQL migration for `weekly_wraps`** still
+   outstanding from 2026-05-06 (carried forward). First Friday cron will
+   404 on publish until the table exists.
+
+8. **Propagate the alert pattern to weekly_wrap publish** once #6 lands.
+
+9. **Lovable: render chart_hints as sparklines.** Backend now emits
+   `digest.market_wrap.chart_hints` and `wrap.weekly_wrap.chart_hints`
+   shaped as `[{ticker, paragraph_index, timeframe, importance}, ...]`.
+   Frontend needs: (a) some source of historical price/yield data per
+   ticker — either fetch client-side from Yahoo Finance, or have us
+   extend `market_snapshot` server-side to include a small price
+   history per charted ticker; (b) place a small sparkline next to
+   the paragraph whose `paragraph_index` matches, ordered by
+   `importance`. Decide source-of-data approach before scoping the UI.
+
 Last updated: 2026-05-06 (Wednesday) — watchlist add + Friday weekly wrap
 
 ## Session 2026-05-06
